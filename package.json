@@ -1,6 +1,6 @@
 {
   "name": "traffic-card-manager",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "流量卡管理系统 - 本地版",
   "main": "dist-electron/main.js",
   "scripts": {

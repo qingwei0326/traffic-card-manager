@@ -10,6 +10,7 @@ import {
   Moon,
   PackageSearch,
   RotateCw,
+  Search,
   Settings,
   Signal,
   Sun,
@@ -34,9 +35,11 @@ const menuItems: { key: Page; label: string; icon: ComponentType<{ className?: s
 
 export default function Layout({ children, currentPage, onNavigate }: LayoutProps) {
   const [updateVersion, setUpdateVersion] = useState('')
+  const [updateChecking, setUpdateChecking] = useState(false)
   const [updateDownloading, setUpdateDownloading] = useState(false)
   const [updateProgress, setUpdateProgress] = useState(0)
   const [updateReady, setUpdateReady] = useState(false)
+  const [updateMessage, setUpdateMessage] = useState('')
   const [darkMode, setDarkMode] = useState(() => {
     return localStorage.getItem('theme') === 'dark' ||
       (!localStorage.getItem('theme') && window.matchMedia('(prefers-color-scheme: dark)').matches)
@@ -45,24 +48,34 @@ export default function Layout({ children, currentPage, onNavigate }: LayoutProp
   useEffect(() => {
     window.electronAPI.update?.onAvailable?.((version: string) => {
       setUpdateVersion(version)
+      setUpdateChecking(false)
       setUpdateDownloading(false)
+      setUpdateMessage(`发现新版本 v${version}`)
       setUpdateProgress(0)
     })
     window.electronAPI.update?.onNotAvailable?.(() => {
       setUpdateVersion('')
+      setUpdateChecking(false)
       setUpdateDownloading(false)
       setUpdateProgress(0)
+      setUpdateMessage('当前已是最新版本')
     })
     window.electronAPI.update?.onProgress?.((percent: number) => {
       setUpdateProgress(percent)
+      setUpdateChecking(false)
       setUpdateDownloading(true)
+      setUpdateMessage('')
     })
     window.electronAPI.update?.onDownloaded?.(() => {
       setUpdateReady(true)
+      setUpdateChecking(false)
       setUpdateDownloading(false)
+      setUpdateMessage('更新已下载完成')
     })
-    window.electronAPI.update?.onError?.(() => {
+    window.electronAPI.update?.onError?.((message: string) => {
+      setUpdateChecking(false)
       setUpdateDownloading(false)
+      setUpdateMessage(message || '检查更新失败')
     })
   }, [])
 
@@ -141,8 +154,12 @@ export default function Layout({ children, currentPage, onNavigate }: LayoutProp
               <button
                 onClick={async () => {
                   setUpdateDownloading(true)
+                  setUpdateMessage('')
                   const result = await window.electronAPI.update?.download?.()
-                  if (result && !result.ok) setUpdateDownloading(false)
+                  if (result && !result.ok) {
+                    setUpdateDownloading(false)
+                    setUpdateMessage(result.message || '下载更新失败')
+                  }
                 }}
                 className="w-full inline-flex items-center justify-center gap-2 px-3 py-2 bg-blue-600 text-white text-xs rounded-md hover:bg-blue-700 transition-colors"
               >
@@ -151,9 +168,32 @@ export default function Layout({ children, currentPage, onNavigate }: LayoutProp
               </button>
             )
           ) : (
+            <button
+              onClick={async () => {
+                setUpdateChecking(true)
+                setUpdateMessage('正在检查更新...')
+                const result = await window.electronAPI.update?.check?.()
+                if (result && !result.ok) {
+                  setUpdateChecking(false)
+                  setUpdateMessage(result.message || '检查更新失败')
+                }
+              }}
+              disabled={updateChecking}
+              className="w-full inline-flex items-center justify-center gap-2 px-3 py-2 text-xs rounded-md border border-slate-200 dark:border-slate-600 hover:bg-slate-50 dark:hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-60 transition-colors"
+            >
+              {updateChecking ? <RotateCw className="h-3.5 w-3.5 animate-spin" /> : <Search className="h-3.5 w-3.5" />}
+              {updateChecking ? '正在检查更新' : '检查更新'}
+            </button>
+          )}
+
+          {updateMessage ? (
+            <p className="text-center text-[11px] leading-4 text-slate-400 dark:text-slate-500">
+              {updateMessage}
+            </p>
+          ) : (
             <p className="flex items-center justify-center gap-1.5 text-xs text-slate-400 text-center">
               <Database className="h-3.5 w-3.5" />
-              流量卡管理系统 v1.0
+              流量卡管理系统 v1.0.1
             </p>
           )}
         </div>

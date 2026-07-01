@@ -74,6 +74,8 @@ function createWindow() {
       nodeIntegration: false,
     },
   })
+  mainWindow.setMenuBarVisibility(false)
+  mainWindow.setAutoHideMenuBar(true)
 
   // 开发环境加载 Vite 开发服务器，生产环境加载打包后的文件
   if (process.env.VITE_DEV_SERVER_URL) {
