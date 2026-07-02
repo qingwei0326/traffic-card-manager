@@ -27,6 +27,7 @@
   },
   "bundle": {
     "active": true,
+    "createUpdaterArtifacts": true,
     "targets": ["nsis"],
     "icon": ["icons/icon.ico", "icons/icon.png"],
     "resources": ["../data/172-plans.json", "../data/haoyi-plans-parsed.json"],
@@ -36,6 +37,14 @@
         "installMode": "both",
         "displayLanguageSelector": false
       }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDJEQUI3RjJFMDM4OTA3QgpSV1I3a0RqZzhyZmFBdGN3czZPUW12UnpHSVlpT1Q5a28xRFZ4UTNSWFZubzJjVk1uZ2hZeHRRZwo=",
+      "endpoints": [
+        "https://github.com/qingwei0326/traffic-card-manager/releases/latest/download/latest.json"
+      ]
     }
   }
 }

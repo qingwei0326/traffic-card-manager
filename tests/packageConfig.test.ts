@@ -5,6 +5,8 @@ import path from 'node:path'
 const root = path.resolve(__dirname, '..')
 const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
 const tauriConfig = JSON.parse(fs.readFileSync(path.join(root, 'src-tauri/tauri.conf.json'), 'utf8'))
+const defaultCapability = JSON.parse(fs.readFileSync(path.join(root, 'src-tauri/capabilities/default.json'), 'utf8'))
+const updaterEndpoint = 'https://github.com/qingwei0326/traffic-card-manager/releases/latest/download/latest.json'
 
 describe('Tauri package config', () => {
   const removedRuntime = `${'elec'}${'tron'}`
@@ -27,6 +29,7 @@ describe('Tauri package config', () => {
   it('keeps renderer dependencies and removes legacy runtime dependencies', () => {
     expect(pkg.dependencies.react).toBeDefined()
     expect(pkg.dependencies['@tauri-apps/api']).toBeDefined()
+    expect(pkg.dependencies['@tauri-apps/plugin-updater']).toBeDefined()
     expect(pkg.dependencies[removedSql]).toBeUndefined()
     expect(pkg.dependencies[removedLog]).toBeUndefined()
     expect(pkg.dependencies[removedUpdater]).toBeUndefined()
@@ -47,5 +50,13 @@ describe('Tauri package config', () => {
     expect(tauriConfig.bundle.targets).toContain('nsis')
     expect(tauriConfig.bundle.resources).toContain('../data/172-plans.json')
     expect(tauriConfig.bundle.resources).toContain('../data/haoyi-plans-parsed.json')
+  })
+
+  it('configures Tauri updater endpoint, signing public key, and permission', () => {
+    expect(tauriConfig.bundle.createUpdaterArtifacts).toBe(true)
+    expect(tauriConfig.plugins.updater.endpoints).toContain(updaterEndpoint)
+    expect(typeof tauriConfig.plugins.updater.pubkey).toBe('string')
+    expect(tauriConfig.plugins.updater.pubkey.length).toBeGreaterThan(20)
+    expect(defaultCapability.permissions).toContain('updater:default')
   })
 })
