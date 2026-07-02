@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Card, Customer } from '../types'
 import { Save, X } from 'lucide-react'
+import { appApi } from '../lib/appApi'
 
 interface CardFormProps {
   card: Card | null
@@ -113,7 +114,7 @@ export default function CardForm({ card, onSave, onCancel }: CardFormProps) {
 
   const loadCustomers = async () => {
     try {
-      const result = await window.electronAPI.customers.getAll({ pageSize: 500 })
+      const result = await appApi.customers.getAll({ pageSize: 500 })
       setCustomers(result.data)
     } catch (error) {
       console.error('加载客户失败:', error)
@@ -165,9 +166,9 @@ export default function CardForm({ card, onSave, onCancel }: CardFormProps) {
     setSaving(true)
     try {
       if (card) {
-        await window.electronAPI.cards.update(card.id, form)
+        await appApi.cards.update(card.id, form)
       } else {
-        await window.electronAPI.cards.create(form)
+        await appApi.cards.create(form)
       }
       onSave()
     } catch (error) {

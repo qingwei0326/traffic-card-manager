@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
-import { ImportResult } from '../types'
+import { ImportResult, PlanImportResult } from '../types'
+import { appApi } from '../lib/appApi'
 
 interface SettingsProps {
   onRefresh: () => void
@@ -28,7 +29,7 @@ export default function Settings({ onRefresh }: SettingsProps) {
   const [apiTestResult, setApiTestResult] = useState<{ success: boolean; message: string } | null>(null)
   const [apiConfigSaved, setApiConfigSaved] = useState(false)
   const [syncingProducts, setSyncingProducts] = useState(false)
-  const [syncResult, setSyncResult] = useState<{ imported: number; updated: number; total: number } | null>(null)
+  const [syncResult, setSyncResult] = useState<PlanImportResult | null>(null)
   const [queryingOrder, setQueryingOrder] = useState(false)
   const [orderQueryId, setOrderQueryId] = useState('')
   const [orderQueryResult, setOrderQueryResult] = useState<any>(null)
@@ -50,7 +51,7 @@ export default function Settings({ onRefresh }: SettingsProps) {
 
   // 加载保存的配置（从主进程安全存储）
   useEffect(() => {
-    window.electronAPI.apiConfig.get().then(config => {
+    appApi.apiConfig.get().then(config => {
       if (config.user_id || config.secret) {
         setApiConfig(config)
       }
@@ -58,7 +59,7 @@ export default function Settings({ onRefresh }: SettingsProps) {
   }, [])
 
   const handleSaveApiConfig = async () => {
-    await window.electronAPI.apiConfig.save(apiConfig)
+    await appApi.apiConfig.save(apiConfig)
     setApiConfigSaved(true)
     setTimeout(() => setApiConfigSaved(false), 2000)
   }
@@ -67,7 +68,7 @@ export default function Settings({ onRefresh }: SettingsProps) {
     setTestingApi(true)
     setApiTestResult(null)
     try {
-      const result = await window.electronAPI.api172.testConnection(apiConfig)
+      const result = await appApi.api172.testConnection(apiConfig)
       setApiTestResult(result)
     } catch (error: any) {
       setApiTestResult({ success: false, message: `测试失败: ${error.message}` })
@@ -80,7 +81,7 @@ export default function Settings({ onRefresh }: SettingsProps) {
     setSyncingProducts(true)
     setSyncResult(null)
     try {
-      const result = await window.electronAPI.api172.syncProducts(apiConfig)
+      const result = await appApi.api172.syncProducts(apiConfig)
       setSyncResult(result)
       onRefresh()
     } catch (error: any) {
@@ -95,7 +96,7 @@ export default function Settings({ onRefresh }: SettingsProps) {
     setQueryingOrder(true)
     setOrderQueryResult(null)
     try {
-      const result = await window.electronAPI.api172.getOrderInfo(apiConfig, orderQueryId.trim())
+      const result = await appApi.api172.getOrderInfo(apiConfig, orderQueryId.trim())
       setOrderQueryResult(result)
     } catch (error: any) {
       setOrderQueryResult({ code: -1, message: '查询失败: ' + error.message })
@@ -107,7 +108,7 @@ export default function Settings({ onRefresh }: SettingsProps) {
   const handleExport = async () => {
     setExporting(true)
     try {
-      const data = await window.electronAPI.backup.export()
+      const data = await appApi.backup.export()
       const json = JSON.stringify(data, null, 2)
       const blob = new Blob([json], { type: 'application/json' })
       const url = URL.createObjectURL(blob)
@@ -144,7 +145,7 @@ export default function Settings({ onRefresh }: SettingsProps) {
           throw new Error('数据格式不正确')
         }
 
-        const result = await window.electronAPI.backup.import(data)
+        const result = await appApi.backup.import(data)
         setBackupResult(`导入成功：${result.cards} 张卡片，${result.customers} 个客户`)
         onRefresh()
       } catch (error) {
@@ -184,10 +185,10 @@ export default function Settings({ onRefresh }: SettingsProps) {
         setPreviewRows(rows)
         setPreviewHeaders(headers)
         setPreviewTitle(`172号卡订单 — 共 ${rows.length} 条`)
-        setPreviewSkippedReason('已存在、已撤单或审核不通过')
+        setPreviewSkippedReason('已撤单或审核不通过')
         setPreviewImportFn(() => async (r: any[]) => {
-          const result = await window.electronAPI.import172.import(r)
-          setImportResult({ title: '172号卡订单导入完成', result, skippedReason: '已存在、已撤单或审核不通过' })
+          const result = await appApi.import172.import(r)
+          setImportResult({ title: '172号卡订单导入完成', result, skippedReason: '已撤单或审核不通过' })
           onRefresh()
           return result
         })
@@ -228,10 +229,10 @@ export default function Settings({ onRefresh }: SettingsProps) {
         setPreviewRows(rows)
         setPreviewHeaders(headers)
         setPreviewTitle(`号易订单 — 共 ${rows.length} 条`)
-        setPreviewSkippedReason('已存在、开卡失败或已取消')
+        setPreviewSkippedReason('开卡失败或已取消')
         setPreviewImportFn(() => async (r: any[]) => {
-          const result = await window.electronAPI.importHaoyi.import(r)
-          setImportResult({ title: '号易订单导入完成', result, skippedReason: '已存在、开卡失败或已取消' })
+          const result = await appApi.importHaoyi.import(r)
+          setImportResult({ title: '号易订单导入完成', result, skippedReason: '开卡失败或已取消' })
           onRefresh()
           return result
         })
@@ -317,7 +318,7 @@ export default function Settings({ onRefresh }: SettingsProps) {
             </button>
             {syncResult && (
               <span className="text-sm text-green-700">
-                ✅ 新增 {syncResult.imported} 条，更新 {syncResult.updated} 条（共 {syncResult.total} 个产品）
+                ✅ 新增 {syncResult.imported} 条，更新 {syncResult.updated} 条，回填老卡 {syncResult.backfilled} 张（共 {syncResult.total} 个产品）
               </span>
             )}
           </div>
@@ -378,7 +379,7 @@ export default function Settings({ onRefresh }: SettingsProps) {
           <li>• 自动识别运营商和套餐类型</li>
           <li>• 自动创建客户记录并关联</li>
           <li>• 跳过已撤单和审核不通过的订单</li>
-          <li>• 跳过已存在的订单（通过订单号去重）</li>
+          <li>• 已存在订单会更新状态、激活时间、物流和利润</li>
         </ul>
         <div
           onDragOver={e => { e.preventDefault(); e.currentTarget.classList.add('border-blue-400', 'bg-blue-50') }}
@@ -403,10 +404,10 @@ export default function Settings({ onRefresh }: SettingsProps) {
               const headers = Object.keys(rows[0])
               setPreviewRows(rows); setPreviewHeaders(headers)
               setPreviewTitle(`172号卡订单 — 共 ${rows.length} 条`)
-              setPreviewSkippedReason('已存在、已撤单或审核不通过')
+              setPreviewSkippedReason('已撤单或审核不通过')
               setPreviewImportFn(() => async (r: any[]) => {
-                const result = await window.electronAPI.import172.import(r)
-                setImportResult({ title: '172号卡订单导入完成', result, skippedReason: '已存在、已撤单或审核不通过' })
+                const result = await appApi.import172.import(r)
+                setImportResult({ title: '172号卡订单导入完成', result, skippedReason: '已撤单或审核不通过' })
                 onRefresh(); return result
               })
               setPreviewOpen(true)
@@ -430,21 +431,25 @@ export default function Settings({ onRefresh }: SettingsProps) {
           <div className="flex items-start justify-between gap-4">
             <div>
               <h3 className="text-lg font-semibold text-blue-900">{importResult.title}</h3>
-              <div className="grid grid-cols-3 gap-4 mt-4">
+              <div className="grid grid-cols-4 gap-4 mt-4">
                 <div>
                   <p className="text-sm text-blue-700">总计</p>
                   <p className="text-2xl font-bold text-blue-950">{importResult.result.total}</p>
                 </div>
                 <div>
-                  <p className="text-sm text-blue-700">成功导入</p>
+                  <p className="text-sm text-blue-700">新增</p>
                   <p className="text-2xl font-bold text-green-700">{importResult.result.imported}</p>
+                </div>
+                <div>
+                  <p className="text-sm text-blue-700">更新</p>
+                  <p className="text-2xl font-bold text-blue-700">{importResult.result.updated}</p>
                 </div>
                 <div>
                   <p className="text-sm text-blue-700">跳过</p>
                   <p className="text-2xl font-bold text-orange-700">{importResult.result.skipped}</p>
                 </div>
               </div>
-              <p className="text-sm text-blue-800 mt-3">跳过原因：{importResult.skippedReason}</p>
+              <p className="text-sm text-blue-800 mt-3">已有订单会更新状态、激活时间、物流和利润；跳过原因：{importResult.skippedReason}</p>
             </div>
             <button
               onClick={() => setImportResult(null)}
@@ -468,7 +473,7 @@ export default function Settings({ onRefresh }: SettingsProps) {
           <li>• 自动转换Excel日期格式</li>
           <li>• 自动创建客户记录并关联</li>
           <li>• 跳过开卡失败和已取消的订单</li>
-          <li>• 跳过已存在的订单（通过订单号去重）</li>
+          <li>• 已存在订单会更新状态、激活时间、物流和利润</li>
         </ul>
         <div
           onDragOver={e => { e.preventDefault(); e.currentTarget.classList.add('border-blue-400', 'bg-blue-50') }}
@@ -492,10 +497,10 @@ export default function Settings({ onRefresh }: SettingsProps) {
               const headers = Object.keys(rows[0])
               setPreviewRows(rows); setPreviewHeaders(headers)
               setPreviewTitle(`号易订单 — 共 ${rows.length} 条`)
-              setPreviewSkippedReason('已存在、开卡失败或已取消')
+              setPreviewSkippedReason('开卡失败或已取消')
               setPreviewImportFn(() => async (r: any[]) => {
-                const result = await window.electronAPI.importHaoyi.import(r)
-                setImportResult({ title: '号易订单导入完成', result, skippedReason: '已存在、开卡失败或已取消' })
+                const result = await appApi.importHaoyi.import(r)
+                setImportResult({ title: '号易订单导入完成', result, skippedReason: '开卡失败或已取消' })
                 onRefresh(); return result
               })
               setPreviewOpen(true)
@@ -549,7 +554,7 @@ export default function Settings({ onRefresh }: SettingsProps) {
         <h3 className="text-lg font-semibold text-gray-900 mb-4">📦 套餐模板导入</h3>
         <p className="text-sm text-gray-500 mb-4">
           从抓取的JSON文件批量导入套餐模板。支持172号卡平台和号易平台的数据格式，系统会自动识别。
-          已存在的套餐（按商品ID判断）不会重复导入，172数据会更新已有记录。
+          已存在的套餐会更新关键字段，并自动回填已录入卡片缺失的优惠期和合约期。
         </p>
 
         <div className="flex gap-4 flex-wrap">
@@ -558,8 +563,8 @@ export default function Settings({ onRefresh }: SettingsProps) {
               if (!confirm('确定要导入172套餐模板吗？\n文件：data/172-plans.json')) return
               setImportingPlans(true)
               try {
-                const result = await window.electronAPI.plans.importFromFile('data/172-plans.json')
-                setPlanImportResult(`172号卡平台：新增 ${result.imported} 条，更新 ${result.updated} 条（共 ${result.total} 条）`)
+                const result = await appApi.plans.importFromFile('data/172-plans.json')
+                setPlanImportResult(`172号卡平台：新增 ${result.imported} 条，更新 ${result.updated} 条，回填老卡 ${result.backfilled} 张（共 ${result.total} 条）`)
                 onRefresh()
               } catch (e: any) {
                 setPlanImportResult('导入失败: ' + e.message)
@@ -578,8 +583,8 @@ export default function Settings({ onRefresh }: SettingsProps) {
               if (!confirm('确定要导入号易套餐模板吗？\n文件：data/haoyi-plans-parsed.json')) return
               setImportingPlans(true)
               try {
-                const result = await window.electronAPI.plans.importFromFile('data/haoyi-plans-parsed.json')
-                setPlanImportResult(`号易平台：新增 ${result.imported} 条，更新 ${result.updated} 条（共 ${result.total} 条）`)
+                const result = await appApi.plans.importFromFile('data/haoyi-plans-parsed.json')
+                setPlanImportResult(`号易平台：新增 ${result.imported} 条，更新 ${result.updated} 条，回填老卡 ${result.backfilled} 张（共 ${result.total} 条）`)
                 onRefresh()
               } catch (e: any) {
                 setPlanImportResult('导入失败: ' + e.message)

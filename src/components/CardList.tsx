@@ -4,19 +4,22 @@ import CardForm from './CardForm'
 import { ConfirmModal, AlertModal } from './Modal'
 import Skeleton from './Skeleton'
 import { Check, Edit3, Plus, Search, Trash2, X } from 'lucide-react'
+import { appApi } from '../lib/appApi'
 
 interface CardListProps {
   onRefresh: () => void
   openForm?: boolean
   onFormOpened?: () => void
   onViewCustomer?: (customerId: number) => void
+  initialStatus?: Card['status'] | ''
+  onInitialStatusUsed?: () => void
 }
 
 const carriers = ['全部', '移动', '联通', '电信', '广电']
 const planTypes = ['全部', '性价比', '大流量', '长期套餐', '低价套餐']
 const statuses = ['全部', '使用中', '待确认', '已到期', '已注销']
 
-export default function CardList({ onRefresh, openForm, onFormOpened, onViewCustomer }: CardListProps) {
+export default function CardList({ onRefresh, openForm, onFormOpened, onViewCustomer, initialStatus, onInitialStatusUsed }: CardListProps) {
   const [cards, setCards] = useState<Card[]>([])
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
@@ -63,11 +66,19 @@ export default function CardList({ onRefresh, openForm, onFormOpened, onViewCust
     }
   }, [openForm])
 
+  useEffect(() => {
+    if (initialStatus) {
+      setPage(1)
+      setFilters(prev => ({ ...prev, status: initialStatus, page: 1 }))
+      onInitialStatusUsed?.()
+    }
+  }, [initialStatus])
+
   const loadCards = async () => {
     setLoading(true)
     setError('')
     try {
-      const result = await window.electronAPI.cards.getAll(filters)
+      const result = await appApi.cards.getAll(filters)
       setCards(result.data)
       setTotal(result.total)
     } catch (error) {
@@ -105,7 +116,7 @@ export default function CardList({ onRefresh, openForm, onFormOpened, onViewCust
 
   const handleBatchDelete = async () => {
     for (const id of selectedIds) {
-      await window.electronAPI.cards.delete(id)
+      await appApi.cards.delete(id)
     }
     setSelectedIds(new Set())
     loadCards()
@@ -114,7 +125,7 @@ export default function CardList({ onRefresh, openForm, onFormOpened, onViewCust
 
   const handleBatchStatus = async () => {
     for (const id of selectedIds) {
-      await window.electronAPI.cards.update(id, { status: batchStatus as Card['status'] })
+      await appApi.cards.update(id, { status: batchStatus as Card['status'] })
     }
     setSelectedIds(new Set())
     setBatchAction(null)
@@ -124,7 +135,7 @@ export default function CardList({ onRefresh, openForm, onFormOpened, onViewCust
 
   const handleDelete = async (id: number) => {
     try {
-      await window.electronAPI.cards.delete(id)
+      await appApi.cards.delete(id)
       loadCards()
       onRefresh()
     } catch (error) {
@@ -300,7 +311,6 @@ export default function CardList({ onRefresh, openForm, onFormOpened, onViewCust
                   </th>
                   <th>客户</th>
                   <th>手机号</th>
-                  <th>地市</th>
                   <th>套餐</th>
                   <th>运营商</th>
                   <th>月消费</th>
@@ -342,13 +352,6 @@ export default function CardList({ onRefresh, openForm, onFormOpened, onViewCust
                         )}
                       </td>
                       <td>{card.phone_number || '-'}</td>
-                      <td>
-                        {card.region ? (
-                          <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-700 dark:bg-slate-700 dark:text-slate-200">
-                            {card.region.replace(/(.*[市州]).*$/, '$1')}
-                          </span>
-                        ) : '-'}
-                      </td>
                       <td className="font-medium max-w-[240px] truncate" title={card.card_name}>{card.card_name}</td>
                       <td>{card.carrier}</td>
                       <td className="font-medium">¥{(card.monthly_price || 0).toFixed(2)}</td>

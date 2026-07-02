@@ -16,6 +16,7 @@ import {
   Sun,
   Users,
 } from 'lucide-react'
+import { appApi } from '../lib/appApi'
 
 interface LayoutProps {
   children: ReactNode
@@ -46,37 +47,53 @@ export default function Layout({ children, currentPage, onNavigate }: LayoutProp
   })
 
   useEffect(() => {
-    window.electronAPI.update?.onAvailable?.((version: string) => {
+    const disposers: Array<() => void> = []
+    let active = true
+    const addDisposer = (promise: Promise<() => void>) => {
+      promise.then(dispose => {
+        if (active) {
+          disposers.push(dispose)
+        } else {
+          dispose()
+        }
+      })
+    }
+
+    addDisposer(appApi.update.onAvailable((version: string) => {
       setUpdateVersion(version)
       setUpdateChecking(false)
       setUpdateDownloading(false)
       setUpdateMessage(`发现新版本 v${version}`)
       setUpdateProgress(0)
-    })
-    window.electronAPI.update?.onNotAvailable?.(() => {
+    }))
+    addDisposer(appApi.update.onNotAvailable(() => {
       setUpdateVersion('')
       setUpdateChecking(false)
       setUpdateDownloading(false)
       setUpdateProgress(0)
       setUpdateMessage('当前已是最新版本')
-    })
-    window.electronAPI.update?.onProgress?.((percent: number) => {
+    }))
+    addDisposer(appApi.update.onProgress((percent: number) => {
       setUpdateProgress(percent)
       setUpdateChecking(false)
       setUpdateDownloading(true)
       setUpdateMessage('')
-    })
-    window.electronAPI.update?.onDownloaded?.(() => {
+    }))
+    addDisposer(appApi.update.onDownloaded(() => {
       setUpdateReady(true)
       setUpdateChecking(false)
       setUpdateDownloading(false)
       setUpdateMessage('更新已下载完成')
-    })
-    window.electronAPI.update?.onError?.((message: string) => {
+    }))
+    addDisposer(appApi.update.onError((message: string) => {
       setUpdateChecking(false)
       setUpdateDownloading(false)
       setUpdateMessage(message || '检查更新失败')
-    })
+    }))
+    return () => {
+      active = false
+      disposers.forEach(dispose => dispose())
+    }
   }, [])
 
   useEffect(() => {
@@ -138,7 +155,7 @@ export default function Layout({ children, currentPage, onNavigate }: LayoutProp
 
           {updateReady ? (
             <button
-              onClick={() => window.electronAPI.update?.install?.()}
+              onClick={() => appApi.update?.install?.()}
               className="w-full inline-flex items-center justify-center gap-2 px-3 py-2 bg-green-600 text-white text-xs rounded-md hover:bg-green-700 transition-colors"
             >
               <RotateCw className="h-3.5 w-3.5" />
@@ -155,7 +172,7 @@ export default function Layout({ children, currentPage, onNavigate }: LayoutProp
                 onClick={async () => {
                   setUpdateDownloading(true)
                   setUpdateMessage('')
-                  const result = await window.electronAPI.update?.download?.()
+                  const result = await appApi.update?.download?.()
                   if (result && !result.ok) {
                     setUpdateDownloading(false)
                     setUpdateMessage(result.message || '下载更新失败')
@@ -172,7 +189,7 @@ export default function Layout({ children, currentPage, onNavigate }: LayoutProp
               onClick={async () => {
                 setUpdateChecking(true)
                 setUpdateMessage('正在检查更新...')
-                const result = await window.electronAPI.update?.check?.()
+                const result = await appApi.update?.check?.()
                 if (result && !result.ok) {
                   setUpdateChecking(false)
                   setUpdateMessage(result.message || '检查更新失败')

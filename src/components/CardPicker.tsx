@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Plan } from '../types'
+import { appApi } from '../lib/appApi'
 
 // 中国省份列表
 const PROVINCES = [
@@ -53,7 +54,7 @@ export default function CardPicker({ initialProvince, onProvinceUsed }: CardPick
   const loadPlans = async () => {
     setLoading(true)
     try {
-      const data = await window.electronAPI.plans.getAll()
+      const data = await appApi.plans.getAll()
       setPlans(data)
     } catch (e) {
       console.error('加载套餐失败:', e)

@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Customer } from '../types'
+import { appApi } from '../lib/appApi'
 
 interface CustomerFormProps {
   customer: Customer | null
@@ -80,9 +81,9 @@ export default function CustomerForm({ customer, onSave, onCancel }: CustomerFor
     setSaving(true)
     try {
       if (customer) {
-        await window.electronAPI.customers.update(customer.id, form)
+        await appApi.customers.update(customer.id, form)
       } else {
-        await window.electronAPI.customers.create(form)
+        await appApi.customers.create(form)
       }
       onSave()
     } catch (error) {

@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { Customer, Card, CustomerFilters } from '../types'
 import CustomerForm from './CustomerForm'
 import { ConfirmModal, AlertModal } from './Modal'
+import { appApi } from '../lib/appApi'
 
 interface CustomerListProps {
   onRefresh: () => void
@@ -87,7 +88,7 @@ export default function CustomerList({ onRefresh, openForm, onFormOpened, select
   const loadCustomers = async () => {
     setLoading(true)
     try {
-      const result = await window.electronAPI.customers.getAll({ search, tag: tagFilter, page, pageSize: PAGE_SIZE })
+      const result = await appApi.customers.getAll({ search, tag: tagFilter, page, pageSize: PAGE_SIZE })
       setCustomers(result.data)
       setTotal(result.total)
     } catch (error) {
@@ -103,7 +104,7 @@ export default function CustomerList({ onRefresh, openForm, onFormOpened, select
 
   const handleDelete = async (id: number) => {
     try {
-      await window.electronAPI.customers.delete(id)
+      await appApi.customers.delete(id)
       loadCustomers()
       onRefresh()
       if (selectedCustomer?.id === id) {
@@ -124,7 +125,7 @@ export default function CustomerList({ onRefresh, openForm, onFormOpened, select
   const handleViewCards = async (customer: Customer) => {
     setSelectedCustomer(customer)
     try {
-      const cards = await window.electronAPI.customers.getCards(customer.id)
+      const cards = await appApi.customers.getCards(customer.id)
       setCustomerCards(cards)
     } catch (error) {
       console.error('加载客户卡片失败:', error)
@@ -146,7 +147,7 @@ export default function CustomerList({ onRefresh, openForm, onFormOpened, select
 
   const handleOpenMerge = async () => {
     try {
-      const groups = await window.electronAPI.customers.findDuplicates()
+      const groups = await appApi.customers.findDuplicates()
       if (groups.length === 0) {
         setAlertMsg('没有发现重复客户')
         return
@@ -173,7 +174,7 @@ export default function CustomerList({ onRefresh, openForm, onFormOpened, select
         const keepId = group[keepIdx].id
         const mergeIds = group.filter((_, j) => j !== keepIdx).map(c => c.id)
         if (mergeIds.length === 0) continue
-        const result = await window.electronAPI.customers.merge(keepId, mergeIds)
+        const result = await appApi.customers.merge(keepId, mergeIds)
         totalMerged += result.merged
       }
       setShowMerge(false)

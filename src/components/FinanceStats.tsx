@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { ProfitSummary, MonthlyProfitRow, ProfitByType } from '../types'
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts'
+import { appApi } from '../lib/appApi'
 
 const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899']
 
@@ -22,10 +23,10 @@ export default function FinanceStats() {
     setError('')
     try {
       const [summaryData, monthlyData, carrierData, planTypeData] = await Promise.all([
-        window.electronAPI.finance.getProfitSummary(),
-        window.electronAPI.finance.getMonthlyProfit(year),
-        window.electronAPI.finance.getProfitByCarrier(),
-        window.electronAPI.finance.getProfitByPlanType(),
+        appApi.finance.getProfitSummary(),
+        appApi.finance.getMonthlyProfit(year),
+        appApi.finance.getProfitByCarrier(),
+        appApi.finance.getProfitByPlanType(),
       ])
       setSummary(summaryData)
       setMonthlyProfit(monthlyData)

@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { CardStats, MonthlyStats, Card } from '../types'
 import { Page } from '../App'
 import Skeleton from './Skeleton'
+import { appApi } from '../lib/appApi'
 import {
   BarChart3,
   CalendarClock,
@@ -14,6 +15,7 @@ import {
   UserPlus,
   WalletCards,
   WandSparkles,
+  Hourglass,
 } from 'lucide-react'
 
 interface DashboardProps {
@@ -21,12 +23,15 @@ interface DashboardProps {
   onAddCard: () => void
   onAddCustomer: () => void
   onViewCustomer: (customerId: number) => void
+  onViewPendingCards: () => void
 }
 
-export default function Dashboard({ onNavigate, onAddCard, onAddCustomer, onViewCustomer }: DashboardProps) {
+export default function Dashboard({ onNavigate, onAddCard, onAddCustomer, onViewCustomer, onViewPendingCards }: DashboardProps) {
   const [stats, setStats] = useState<CardStats | null>(null)
   const [monthlyStats, setMonthlyStats] = useState<MonthlyStats | null>(null)
   const [expiringCards, setExpiringCards] = useState<Card[]>([])
+  const [pendingCards, setPendingCards] = useState<Card[]>([])
+  const [pendingTotal, setPendingTotal] = useState(0)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
@@ -39,14 +44,17 @@ export default function Dashboard({ onNavigate, onAddCard, onAddCustomer, onView
     setError('')
     try {
       const now = new Date()
-      const [statsData, monthlyData, expiring] = await Promise.all([
-        window.electronAPI.cards.getStats(),
-        window.electronAPI.cards.getMonthlyStats(now.getFullYear(), now.getMonth() + 1),
-        window.electronAPI.cards.getExpiringSoon(30),
+      const [statsData, monthlyData, expiring, pending] = await Promise.all([
+        appApi.cards.getStats(),
+        appApi.cards.getMonthlyStats(now.getFullYear(), now.getMonth() + 1),
+        appApi.cards.getExpiringSoon(30),
+        appApi.cards.getAll({ status: '待确认', page: 1, pageSize: 8 }),
       ])
       setStats(statsData)
       setMonthlyStats(monthlyData)
       setExpiringCards(expiring)
+      setPendingCards(pending.data)
+      setPendingTotal(pending.total)
     } catch (error) {
       console.error('加载数据失败:', error)
       setError(error instanceof Error ? error.message : '加载数据失败，请重试')
@@ -131,6 +139,72 @@ export default function Dashboard({ onNavigate, onAddCard, onAddCustomer, onView
             ))}
           </div>
         </div>
+      </div>
+
+      {/* 待确认订单 */}
+      <div className="card p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-semibold text-gray-900">
+            <span className="inline-flex items-center gap-2">
+              <Hourglass className="h-5 w-5 text-blue-500" />
+              待确认订单
+            </span>
+          </h3>
+          <div className="flex items-center gap-3">
+            <span className="text-sm text-gray-500">共 {pendingTotal} 张</span>
+            {pendingTotal > 0 && (
+              <button onClick={onViewPendingCards} className="text-sm font-medium text-blue-600 hover:text-blue-800">
+                查看全部 →
+              </button>
+            )}
+          </div>
+        </div>
+
+        {pendingCards.length === 0 ? (
+          <div className="text-center py-8 text-gray-400">
+            暂无待确认订单
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">下单时间</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">平台</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">订单号</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">客户</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">套餐</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">手机号</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">利润</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {pendingCards.map(card => (
+                  <tr key={card.id} className="hover:bg-blue-50 transition-colors">
+                    <td className="px-4 py-3">{card.apply_time ? card.apply_time.slice(0, 10) : '-'}</td>
+                    <td className="px-4 py-3">{card.source || '-'}</td>
+                    <td className="px-4 py-3 font-mono text-xs">{card.external_order_id || '-'}</td>
+                    <td className="px-4 py-3">
+                      {card.customer_id ? (
+                        <button
+                          onClick={() => onViewCustomer(card.customer_id!)}
+                          className="font-medium text-blue-600 hover:text-blue-800 hover:underline"
+                        >
+                          {card.customer_name || '-'}
+                        </button>
+                      ) : (
+                        card.customer_name || '-'
+                      )}
+                    </td>
+                    <td className="px-4 py-3 max-w-[320px] truncate font-medium" title={card.card_name}>{card.card_name}</td>
+                    <td className="px-4 py-3">{card.phone_number || '-'}</td>
+                    <td className="px-4 py-3 text-green-600 font-medium">¥{(card.profit || 0).toFixed(2)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
       {/* 即将到期提醒 */}

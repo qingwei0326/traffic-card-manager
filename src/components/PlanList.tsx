@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Plan } from '../types'
+import { appApi } from '../lib/appApi'
 
 export default function PlanList() {
   const [plans, setPlans] = useState<Plan[]>([])
@@ -8,6 +9,8 @@ export default function PlanList() {
   const [saleFilter, setSaleFilter] = useState('')
   const [loading, setLoading] = useState(true)
   const [importing, setImporting] = useState(false)
+  const [backfilling, setBackfilling] = useState(false)
+  const [notice, setNotice] = useState('')
 
   useEffect(() => {
     loadPlans()
@@ -15,7 +18,7 @@ export default function PlanList() {
 
   const loadPlans = async () => {
     setLoading(true)
-    const data = await window.electronAPI.plans.getAll()
+    const data = await appApi.plans.getAll()
     setPlans(data)
     setLoading(false)
   }
@@ -32,8 +35,8 @@ export default function PlanList() {
       try {
         const text = await file.text()
         const data = JSON.parse(text)
-        const result = await window.electronAPI.plans.import(data)
-        alert(`导入完成：${result.imported} 个新套餐（共 ${result.total} 个）`)
+        const result = await appApi.plans.import(data)
+        setNotice(`导入完成：新增 ${result.imported} 个，更新 ${result.updated} 个，回填历史卡片 ${result.backfilled} 张（共 ${result.total} 个）`)
         loadPlans()
       } catch (err: any) {
         alert('导入失败：' + err.message)
@@ -43,9 +46,21 @@ export default function PlanList() {
     input.click()
   }
 
+  const handleBackfill = async () => {
+    setBackfilling(true)
+    try {
+      const result = await appApi.plans.backfillCards()
+      setNotice(`回填完成：补齐历史卡片 ${result.backfilled} 张`)
+    } catch (err: any) {
+      alert('回填失败：' + err.message)
+    } finally {
+      setBackfilling(false)
+    }
+  }
+
   const handleDelete = async (id: number) => {
     if (!confirm('确定删除这个套餐模板？')) return
-    await window.electronAPI.plans.delete(id)
+    await appApi.plans.delete(id)
     loadPlans()
   }
 
@@ -73,14 +88,29 @@ export default function PlanList() {
           <h1 className="text-2xl font-bold text-gray-800 dark:text-slate-100">套餐模板库</h1>
           <p className="text-sm text-gray-500 dark:text-slate-400 mt-1">共 {plans.length} 个套餐模板，导入订单时自动匹配</p>
         </div>
-        <button
-          onClick={handleImport}
-          disabled={importing}
-          className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50"
-        >
-          {importing ? '导入中...' : '导入套餐数据'}
-        </button>
+        <div className="flex gap-3">
+          <button
+            onClick={handleBackfill}
+            disabled={backfilling}
+            className="px-4 py-2 border border-blue-500 text-blue-600 rounded-lg hover:bg-blue-50 disabled:opacity-50"
+          >
+            {backfilling ? '回填中...' : '回填历史卡片'}
+          </button>
+          <button
+            onClick={handleImport}
+            disabled={importing}
+            className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50"
+          >
+            {importing ? '导入中...' : '导入/更新套餐数据'}
+          </button>
+        </div>
       </div>
+
+      {notice && (
+        <div className="mb-4 rounded-lg bg-blue-50 px-4 py-3 text-sm text-blue-800">
+          {notice}
+        </div>
+      )}
 
       {/* 运营商统计 */}
       <div className="grid grid-cols-3 md:grid-cols-6 gap-4 mb-6">

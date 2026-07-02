@@ -109,8 +109,17 @@ export interface CustomerFilters {
 
 export interface ImportResult {
   imported: number
+  updated: number
   skipped: number
   total: number
+}
+
+export interface PlanImportResult {
+  imported: number
+  updated: number
+  backfilled: number
+  total: number
+  source?: string
 }
 
 // 套餐模板类型
@@ -137,81 +146,89 @@ export interface Plan {
   created_at: string
 }
 
-// 窗口类型声明
-declare global {
-  interface Window {
-    electronAPI: {
-      cards: {
-        getAll: (filters?: CardFilters) => Promise<PaginatedResult<Card>>
-        getById: (id: number) => Promise<Card>
-        create: (card: Partial<Card>) => Promise<Card>
-        update: (id: number, card: Partial<Card>) => Promise<Card>
-        delete: (id: number) => Promise<any>
-        getStats: () => Promise<CardStats>
-        getMonthlyStats: (year: number, month: number) => Promise<MonthlyStats>
-        getExpiringSoon: (days: number) => Promise<Card[]>
-      }
-      customers: {
-        getAll: (filters?: CustomerFilters) => Promise<PaginatedResult<Customer>>
-        getById: (id: number) => Promise<Customer>
-        create: (customer: Partial<Customer>) => Promise<Customer>
-        update: (id: number, customer: Partial<Customer>) => Promise<Customer>
-        delete: (id: number) => Promise<any>
-        getCards: (id: number) => Promise<Card[]>
-        findDuplicates: () => Promise<Customer[][]>
-        merge: (keepId: number, mergeIds: number[]) => Promise<{ merged: number }>
-      }
-      finance: {
-        getProfitSummary: () => Promise<ProfitSummary>
-        getMonthlyProfit: (year: number) => Promise<MonthlyProfitRow[]>
-        getProfitByCarrier: () => Promise<ProfitByType[]>
-        getProfitByPlanType: () => Promise<ProfitByType[]>
-      }
-      settings: {}
-      plans: {
-        getAll: () => Promise<Plan[]>
-        import: (plans: any[]) => Promise<{ imported: number; total: number }>
-        importFromFile: (filePath: string) => Promise<{ imported: number; updated: number; total: number; source: string }>
-        match: (cardName: string) => Promise<Plan | null>
-        delete: (id: number) => Promise<void>
-      }
-      backup: {
-        export: () => Promise<any>
-        import: (data: any) => Promise<any>
-      }
-      import172: {
-        import: (rows: any[]) => Promise<{ imported: number; skipped: number; total: number }>
-      }
-      importHaoyi: {
-        import: (rows: any[]) => Promise<{ imported: number; skipped: number; total: number }>
-      }
-      api172: {
-        testConnection: (config: { user_id: string; secret: string }) => Promise<{ success: boolean; message: string }>
-        getProducts: (config: { user_id: string; secret: string }) => Promise<any>
-        syncProducts: (config: { user_id: string; secret: string }) => Promise<{ imported: number; updated: number; total: number }>
-        getOrderInfo: (config: { user_id: string; secret: string }, orderId: string) => Promise<any>
-      }
-      apiConfig: {
-        get: () => Promise<{ user_id: string; secret: string }>
-        save: (config: { user_id: string; secret: string }) => Promise<void>
-      }
-      update: {
-        check: () => Promise<any>
-        download: () => Promise<{ ok: boolean; message?: string }>
-        install: () => Promise<{ ok: boolean; message?: string }>
-        onAvailable: (callback: (version: string) => void) => void
-        onNotAvailable: (callback: () => void) => void
-        onProgress: (callback: (percent: number) => void) => void
-        onDownloaded: (callback: () => void) => void
-        onError: (callback: (message: string) => void) => void
-      }
-      notifications: {
-        checkNow: () => Promise<void>
-        onMessage: (callback: (msg: string) => void) => void
-      }
-      app: {
-        showWindow: () => Promise<void>
-      }
-    }
+export interface Api172Config {
+  user_id: string
+  secret: string
+}
+
+export interface UpdateResult {
+  ok: boolean
+  message?: string
+}
+
+export interface AppApi {
+  cards: {
+    getAll: (filters?: CardFilters) => Promise<PaginatedResult<Card>>
+    getById: (id: number) => Promise<Card | null>
+    create: (card: Partial<Card>) => Promise<Card>
+    update: (id: number, card: Partial<Card>) => Promise<Card>
+    delete: (id: number) => Promise<void>
+    getStats: () => Promise<CardStats>
+    getMonthlyStats: (year: number, month: number) => Promise<MonthlyStats>
+    getExpiringSoon: (days: number) => Promise<Card[]>
+  }
+  customers: {
+    getAll: (filters?: CustomerFilters) => Promise<PaginatedResult<Customer>>
+    getById: (id: number) => Promise<Customer | null>
+    create: (customer: Partial<Customer>) => Promise<Customer>
+    update: (id: number, customer: Partial<Customer>) => Promise<Customer>
+    delete: (id: number) => Promise<void>
+    getCards: (id: number) => Promise<Card[]>
+    findDuplicates: () => Promise<Customer[][]>
+    merge: (keepId: number, mergeIds: number[]) => Promise<{ merged: number }>
+  }
+  finance: {
+    getProfitSummary: () => Promise<ProfitSummary>
+    getMonthlyProfit: (year: number) => Promise<MonthlyProfitRow[]>
+    getProfitByCarrier: () => Promise<ProfitByType[]>
+    getProfitByPlanType: () => Promise<ProfitByType[]>
+  }
+  settings: Record<string, never>
+  plans: {
+    getAll: () => Promise<Plan[]>
+    import: (plans: unknown[]) => Promise<PlanImportResult>
+    importFromFile: (filePath: string) => Promise<PlanImportResult>
+    match: (cardName: string) => Promise<Plan | null>
+    backfillCards: () => Promise<{ backfilled: number }>
+    delete: (id: number) => Promise<void>
+  }
+  backup: {
+    export: () => Promise<any>
+    import: (data: any) => Promise<any>
+  }
+  import172: {
+    import: (rows: unknown[]) => Promise<ImportResult>
+  }
+  importHaoyi: {
+    import: (rows: unknown[]) => Promise<ImportResult>
+  }
+  api172: {
+    testConnection: (config: Api172Config) => Promise<{ success: boolean; message: string }>
+    getProducts: (config: Api172Config) => Promise<any>
+    syncProducts: (config: Api172Config) => Promise<PlanImportResult>
+    getOrderInfo: (config: Api172Config, orderId: string) => Promise<any>
+  }
+  apiConfig: {
+    get: () => Promise<Api172Config>
+    save: (config: Api172Config) => Promise<void>
+  }
+  update: {
+    check: () => Promise<UpdateResult>
+    download: () => Promise<UpdateResult>
+    install: () => Promise<UpdateResult>
+    onAvailable: (callback: (version: string) => void) => Promise<() => void>
+    onNotAvailable: (callback: () => void) => Promise<() => void>
+    onProgress: (callback: (percent: number) => void) => Promise<() => void>
+    onDownloaded: (callback: () => void) => Promise<() => void>
+    onError: (callback: (message: string) => void) => Promise<() => void>
+  }
+  notifications: {
+    checkNow: () => Promise<void>
+    onMessage: (callback: (message: string) => void) => Promise<() => void>
+  }
+  app: {
+    showWindow: () => Promise<void>
+    chooseCloseAction: (action: 'minimize' | 'quit') => Promise<void>
+    onCloseRequest: (callback: () => void) => Promise<() => void>
   }
 }
