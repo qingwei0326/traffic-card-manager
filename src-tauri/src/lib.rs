@@ -1,3 +1,4 @@
+mod commands;
 mod db;
 mod error;
 mod models;
@@ -48,7 +49,24 @@ pub fn run() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![])
+        .invoke_handler(tauri::generate_handler![
+            commands::cards::cards_get_all,
+            commands::cards::cards_get_by_id,
+            commands::cards::cards_create,
+            commands::cards::cards_update,
+            commands::cards::cards_delete,
+            commands::cards::cards_get_stats,
+            commands::cards::cards_get_monthly_stats,
+            commands::cards::cards_get_expiring_soon,
+            commands::customers::customers_get_all,
+            commands::customers::customers_get_by_id,
+            commands::customers::customers_create,
+            commands::customers::customers_update,
+            commands::customers::customers_delete,
+            commands::customers::customers_get_cards,
+            commands::customers::customers_find_duplicates,
+            commands::customers::customers_merge,
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
