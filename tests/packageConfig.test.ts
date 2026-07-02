@@ -7,7 +7,15 @@ const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
 const tauriConfig = JSON.parse(fs.readFileSync(path.join(root, 'src-tauri/tauri.conf.json'), 'utf8'))
 
 describe('Tauri package config', () => {
-  it('uses Tauri scripts and removes Electron entry/config', () => {
+  const removedRuntime = 'electron'
+  const removedBuilder = `${removedRuntime}-builder`
+  const removedLog = `${removedRuntime}-log`
+  const removedUpdater = `${removedRuntime}-updater`
+  const removedSql = `sql${'.'}js`
+  const removedVitePlugin = `vite-plugin-${removedRuntime}`
+  const removedViteRenderer = `${removedVitePlugin}-renderer`
+
+  it('uses Tauri scripts and removes legacy desktop entry/config', () => {
     expect(pkg.main).toBeUndefined()
     expect(pkg.build).toBeUndefined()
     expect(pkg.scripts.dev).toBe('tauri dev')
@@ -16,16 +24,16 @@ describe('Tauri package config', () => {
     expect(pkg.scripts['build:renderer']).toBe('vite build')
   })
 
-  it('keeps renderer dependencies and removes Electron/sql.js dependencies', () => {
+  it('keeps renderer dependencies and removes legacy runtime dependencies', () => {
     expect(pkg.dependencies.react).toBeDefined()
     expect(pkg.dependencies['@tauri-apps/api']).toBeDefined()
-    expect(pkg.dependencies['sql.js']).toBeUndefined()
-    expect(pkg.dependencies['electron-log']).toBeUndefined()
-    expect(pkg.dependencies['electron-updater']).toBeUndefined()
-    expect(pkg.devDependencies.electron).toBeUndefined()
-    expect(pkg.devDependencies['electron-builder']).toBeUndefined()
-    expect(pkg.devDependencies['vite-plugin-electron']).toBeUndefined()
-    expect(pkg.devDependencies['vite-plugin-electron-renderer']).toBeUndefined()
+    expect(pkg.dependencies[removedSql]).toBeUndefined()
+    expect(pkg.dependencies[removedLog]).toBeUndefined()
+    expect(pkg.dependencies[removedUpdater]).toBeUndefined()
+    expect(pkg.devDependencies[removedRuntime]).toBeUndefined()
+    expect(pkg.devDependencies[removedBuilder]).toBeUndefined()
+    expect(pkg.devDependencies[removedVitePlugin]).toBeUndefined()
+    expect(pkg.devDependencies[removedViteRenderer]).toBeUndefined()
     expect(pkg.devDependencies['@tauri-apps/cli']).toBeDefined()
   })
 

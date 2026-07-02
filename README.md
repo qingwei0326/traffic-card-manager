@@ -13,8 +13,9 @@
 ## 技术栈
 
 - **前端**: React + TypeScript + Tailwind CSS
-- **桌面**: Electron
-- **数据库**: SQLite (sql.js)
+- **桌面**: Tauri 2
+- **数据库**: SQLite
+- **后端**: Rust + rusqlite
 - **图表**: Recharts
 
 ## 开发
@@ -30,15 +31,13 @@ npm run dev
 ## 打包
 
 ```bash
-# 本地打包 Windows 安装包和绿色版，不发布
+# 本地打包 Windows 安装包
 npm run build
 ```
 
-打包后的文件在 `release` 目录中：
+打包后的 Windows 安装包位于 `src-tauri/target/release/bundle/nsis/`。
 
-- `traffic-card-manager-setup-x.y.z.exe`：安装版，支持选择安装路径。
-- `traffic-card-manager-x.y.z-portable.zip`：绿色版，解压后运行。
-- `latest.yml` 和 `*.blockmap`：自动更新元数据。
+自动更新入口会继续保留，但 Tauri 自动更新将在后续版本接入。
 
 ## 发布更新
 
@@ -49,12 +48,12 @@ git tag v1.0.0
 git push origin v1.0.0
 ```
 
-Release 工作流会在 Windows 环境运行测试、打包安装版、生成绿色版 zip，并上传自动更新所需的 `latest.yml`。
+Release 工作流会在 Windows 环境运行测试并打包 Tauri Windows 安装包。
 
 ## 数据存储
 
-数据库文件保存在用户数据目录：
-- Windows: `%APPDATA%/traffic-card-manager/traffic-cards.db`
+数据库文件保存在 Tauri 应用数据目录中的 `traffic-cards.db`。
+首次启动 Tauri 版本时，会从旧版用户数据目录复制已有数据库到新的应用数据目录，旧数据库不会被修改。
 
 套餐模板 JSON 放在项目的 `data` 目录中，系统设置页会从这里导入 172 号卡和号易平台套餐数据。
 
