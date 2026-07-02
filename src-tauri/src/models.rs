@@ -161,3 +161,55 @@ pub struct Plan {
     pub sale_status: Option<String>,
     pub created_at: Option<String>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImportResult {
+    pub imported: i64,
+    pub updated: i64,
+    pub skipped: i64,
+    pub total: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlanImportResult {
+    pub imported: i64,
+    pub updated: i64,
+    pub backfilled: i64,
+    pub total: i64,
+    pub source: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProfitSummary {
+    #[serde(rename = "totalProfit")]
+    pub total_profit: f64,
+    #[serde(rename = "avgProfit")]
+    pub avg_profit: f64,
+    #[serde(rename = "totalCards")]
+    pub total_cards: i64,
+    #[serde(rename = "monthProfit")]
+    pub month_profit: f64,
+    #[serde(rename = "monthCards")]
+    pub month_cards: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MonthlyProfitRow {
+    pub month: String,
+    pub profit: f64,
+    pub count: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProfitByType {
+    pub carrier: Option<String>,
+    pub plan_type: Option<String>,
+    pub profit: f64,
+    pub count: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Api172Config {
+    pub user_id: String,
+    pub secret: String,
+}

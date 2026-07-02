@@ -1,4 +1,6 @@
 mod commands;
+mod api172;
+mod config_store;
 mod db;
 mod error;
 mod models;
@@ -66,6 +68,26 @@ pub fn run() {
             commands::customers::customers_get_cards,
             commands::customers::customers_find_duplicates,
             commands::customers::customers_merge,
+            commands::plans::plans_get_all,
+            commands::plans::plans_import,
+            commands::plans::plans_import_from_file,
+            commands::plans::plans_match,
+            commands::plans::plans_backfill_cards,
+            commands::plans::plans_delete,
+            commands::backup::backup_export,
+            commands::backup::backup_import,
+            commands::imports::import_172,
+            commands::imports::import_haoyi,
+            commands::finance::finance_get_profit_summary,
+            commands::finance::finance_get_monthly_profit,
+            commands::finance::finance_get_profit_by_carrier,
+            commands::finance::finance_get_profit_by_plan_type,
+            commands::api::api172_test_connection,
+            commands::api::api172_get_products,
+            commands::api::api172_sync_products,
+            commands::api::api172_get_order_info,
+            commands::api::api_config_get,
+            commands::api::api_config_save,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

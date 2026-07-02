@@ -5,6 +5,8 @@ use std::fs;
 mod db;
 #[path = "../src/error.rs"]
 mod error;
+#[path = "../src/models.rs"]
+mod models;
 
 #[test]
 fn initializes_fresh_database_schema() {

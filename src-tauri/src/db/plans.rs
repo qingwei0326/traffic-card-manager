@@ -1,0 +1,602 @@
+use crate::error::AppResult;
+use crate::models::{Plan, PlanImportResult};
+use chrono::{Datelike, NaiveDate};
+use rusqlite::{params, Connection, Row};
+use serde_json::Value;
+use std::path::PathBuf;
+use tauri::Manager;
+
+pub fn import_plans(conn: &Connection, plans: Vec<Value>) -> AppResult<PlanImportResult> {
+    import_plan_values(conn, plans, "号易平台".to_string(), None)
+}
+
+pub fn import_plans_from_file(
+    conn: &Connection,
+    app_handle: &tauri::AppHandle,
+    file_path: String,
+) -> AppResult<PlanImportResult> {
+    let path = resolve_plan_file(app_handle, &file_path);
+    let raw = std::fs::read_to_string(path)?;
+    let plans: Vec<Value> = serde_json::from_str(&raw)?;
+    if plans.is_empty() {
+        return Ok(PlanImportResult {
+            imported: 0,
+            updated: 0,
+            backfilled: 0,
+            total: 0,
+            source: None,
+        });
+    }
+    let first = &plans[0];
+    let is_172 = first.get("settlementRules").is_some()
+        || first.get("taocanDetail").is_some()
+        || (first.get("price").is_some() && first.get("data").is_some());
+    let source = if is_172 {
+        "172号卡平台"
+    } else {
+        "号易平台"
+    };
+    import_plan_values(conn, plans, source.to_string(), Some(source.to_string()))
+}
+
+pub fn sync_plans_from_172_api(
+    conn: &Connection,
+    products: Vec<Value>,
+) -> AppResult<PlanImportResult> {
+    import_plan_values(conn, products, "172号卡平台".to_string(), None)
+}
+
+pub fn get_all_plans(conn: &Connection) -> AppResult<Vec<Plan>> {
+    let mut stmt = conn.prepare("SELECT * FROM plans ORDER BY carrier, monthly_price")?;
+    let plans = stmt
+        .query_map([], map_plan)?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(plans)
+}
+
+pub fn match_plan(conn: &Connection, card_name: &str) -> AppResult<Option<Plan>> {
+    let mut exact = conn.prepare("SELECT * FROM plans WHERE name = ? LIMIT 1")?;
+    let mut exact_rows = exact.query(params![card_name])?;
+    if let Some(row) = exact_rows.next()? {
+        return Ok(Some(map_plan(row)?));
+    }
+
+    let clean_card = clean_plan_name(card_name);
+    let candidates = get_all_plans(conn)?
+        .into_iter()
+        .filter(|plan| {
+            let clean_plan = clean_plan_name(&plan.name);
+            (!clean_card.is_empty() && plan.name.contains(&clean_card))
+                || (!clean_plan.is_empty() && card_name.contains(&clean_plan))
+        })
+        .collect::<Vec<_>>();
+
+    Ok(pick_compatible_plan(card_name, candidates))
+}
+
+pub fn backfill_card_plan_fields(conn: &Connection) -> AppResult<i64> {
+    let mut stmt = conn.prepare(
+        r#"
+        SELECT id, card_name, contract_period, activate_time, promo_start, promo_end
+        FROM cards
+        WHERE card_name IS NOT NULL
+          AND card_name != ''
+          AND (
+            contract_period IS NULL OR contract_period = 0
+            OR promo_start IS NULL OR promo_start = ''
+            OR promo_end IS NULL OR promo_end = ''
+          )
+        "#,
+    )?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, i64>("id")?,
+                row.get::<_, String>("card_name")?,
+                row.get::<_, Option<i64>>("contract_period")?,
+                row.get::<_, Option<String>>("activate_time")?,
+                row.get::<_, Option<String>>("promo_start")?,
+                row.get::<_, Option<String>>("promo_end")?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let mut updated = 0;
+    for (id, card_name, contract_period, activate_time, promo_start, promo_end) in rows {
+        let Some(plan) = match_plan(conn, &card_name)? else {
+            continue;
+        };
+        let mut assignments = Vec::<String>::new();
+        let mut values = Vec::<rusqlite::types::Value>::new();
+
+        if contract_period.unwrap_or(0) <= 0 && plan.contract_period > 0 {
+            assignments.push("contract_period = ?".into());
+            values.push(rusqlite::types::Value::Integer(plan.contract_period));
+        }
+
+        let start_time = activate_time.clone().or(promo_start.clone()).unwrap_or_default();
+        if plan.promo_period > 0 && !start_time.is_empty() {
+            if promo_start.as_deref().unwrap_or("").trim().is_empty()
+                && activate_time.as_deref().unwrap_or("").trim() != ""
+            {
+                assignments.push("promo_start = ?".into());
+                values.push(rusqlite::types::Value::Text(activate_time.clone().unwrap()));
+            }
+            if promo_end.as_deref().unwrap_or("").trim().is_empty() {
+                let calculated = calculate_promo_end(&start_time, plan.promo_period);
+                if !calculated.is_empty() {
+                    assignments.push("promo_end = ?".into());
+                    values.push(rusqlite::types::Value::Text(calculated));
+                }
+            }
+        }
+
+        if assignments.is_empty() {
+            continue;
+        }
+        assignments.push("updated_at = datetime('now', 'localtime')".into());
+        let sql = format!("UPDATE cards SET {} WHERE id = ?", assignments.join(", "));
+        values.push(rusqlite::types::Value::Integer(id));
+        conn.execute(&sql, rusqlite::params_from_iter(values.iter()))?;
+        updated += 1;
+    }
+
+    Ok(updated)
+}
+
+pub fn delete_plan(conn: &Connection, id: i64) -> AppResult<()> {
+    conn.execute("DELETE FROM plans WHERE id = ?", params![id])?;
+    Ok(())
+}
+
+pub fn calculate_promo_end(start_time: &str, promo_months: i64) -> String {
+    if start_time.trim().is_empty() || promo_months <= 0 {
+        return String::new();
+    }
+    let Ok(start) = NaiveDate::parse_from_str(&start_time[..start_time.len().min(10)], "%Y-%m-%d")
+    else {
+        return String::new();
+    };
+
+    let target_zero_month = start.month0() as i64 + promo_months;
+    let target_year = start.year() + (target_zero_month / 12) as i32;
+    let target_month = (target_zero_month % 12 + 1) as u32;
+    let target_days = days_in_month(target_year, target_month);
+    let result_month = if start.day() > target_days {
+        (target_year, target_month)
+    } else {
+        previous_month(target_year, target_month)
+    };
+    let day = days_in_month(result_month.0, result_month.1);
+    format!("{:04}-{:02}-{:02}", result_month.0, result_month.1, day)
+}
+
+pub(crate) fn parse_monthly_price(plan_name: &str) -> f64 {
+    let Some(index) = plan_name.find('元') else {
+        return 0.0;
+    };
+    let prefix = &plan_name[..index];
+    let number = prefix
+        .chars()
+        .rev()
+        .take_while(|ch| ch.is_ascii_digit() || *ch == '.')
+        .collect::<String>()
+        .chars()
+        .rev()
+        .collect::<String>();
+    number.parse::<f64>().unwrap_or(0.0)
+}
+
+pub(crate) fn parse_data_amount(plan_name: &str) -> String {
+    let Some(g_index) = plan_name.find('G') else {
+        return String::new();
+    };
+    let prefix = &plan_name[..g_index];
+    let number = prefix
+        .chars()
+        .rev()
+        .take_while(|ch| ch.is_ascii_digit())
+        .collect::<String>()
+        .chars()
+        .rev()
+        .collect::<String>();
+    if number.is_empty() {
+        String::new()
+    } else {
+        format!("{number}G")
+    }
+}
+
+pub(crate) fn parse_data_amount_number(value: &str) -> i64 {
+    value
+        .chars()
+        .filter(|ch| ch.is_ascii_digit())
+        .collect::<String>()
+        .parse::<i64>()
+        .unwrap_or(0)
+}
+
+pub(crate) fn parse_carrier(plan_name: &str) -> String {
+    if plan_name.contains("电信") || plan_name.contains("CT") {
+        "电信".into()
+    } else if plan_name.contains("联通") || plan_name.contains("CU") {
+        "联通".into()
+    } else if plan_name.contains("移动") || plan_name.contains("CM") {
+        "移动".into()
+    } else if plan_name.contains("广电") {
+        "广电".into()
+    } else {
+        "未知".into()
+    }
+}
+
+pub(crate) fn parse_plan_type(plan_name: &str) -> String {
+    if plan_name.contains("长期") || plan_name.contains("合约") || plan_name.contains('年') {
+        return "长期套餐".into();
+    }
+    let price = parse_monthly_price(plan_name);
+    let data = parse_data_amount_number(&parse_data_amount(plan_name));
+    if price > 0.0 && price <= 19.0 {
+        "低价套餐".into()
+    } else if price > 0.0 && price <= 29.0 {
+        "性价比".into()
+    } else if price >= 39.0 || data >= 200 {
+        "大流量".into()
+    } else {
+        "性价比".into()
+    }
+}
+
+fn import_plan_values(
+    conn: &Connection,
+    plans: Vec<Value>,
+    source: String,
+    result_source: Option<String>,
+) -> AppResult<PlanImportResult> {
+    let mut imported = 0;
+    let mut updated = 0;
+    conn.execute_batch("BEGIN TRANSACTION")?;
+    let result = (|| {
+        for value in &plans {
+            let plan = normalized_plan(value, &source);
+            if plan.code.is_empty() && plan.name.is_empty() {
+                continue;
+            }
+            let existing_id = if plan.code.is_empty() {
+                None
+            } else {
+                conn.query_row(
+                    "SELECT id FROM plans WHERE code = ?",
+                    params![plan.code],
+                    |row| row.get::<_, i64>(0),
+                )
+                .ok()
+            };
+
+            if let Some(id) = existing_id {
+                conn.execute(
+                    r#"
+                    UPDATE plans SET
+                      grab_code = COALESCE(NULLIF(?, ''), grab_code),
+                      name = COALESCE(NULLIF(?, ''), name),
+                      carrier = COALESCE(NULLIF(?, ''), carrier),
+                      monthly_price = COALESCE(NULLIF(?, 0), monthly_price),
+                      data_amount = COALESCE(NULLIF(?, 0), data_amount),
+                      promo_period = COALESCE(NULLIF(?, 0), promo_period),
+                      contract_period = COALESCE(NULLIF(?, 0), contract_period),
+                      first_charge = COALESCE(NULLIF(?, 0), first_charge),
+                      activation = COALESCE(NULLIF(?, ''), activation),
+                      region = COALESCE(NULLIF(?, ''), region),
+                      commission = COALESCE(NULLIF(?, ''), commission),
+                      note = COALESCE(NULLIF(?, ''), note),
+                      age_limit = COALESCE(NULLIF(?, ''), age_limit),
+                      forbid_regions = COALESCE(NULLIF(?, ''), forbid_regions),
+                      express = COALESCE(NULLIF(?, ''), express),
+                      source = ?,
+                      sale_status = COALESCE(NULLIF(?, ''), sale_status)
+                    WHERE id = ?
+                    "#,
+                    params![
+                        plan.grab_code,
+                        plan.name,
+                        plan.carrier,
+                        plan.monthly_price,
+                        plan.data_amount,
+                        plan.promo_period,
+                        plan.contract_period,
+                        plan.first_charge,
+                        plan.activation,
+                        plan.region,
+                        plan.commission,
+                        plan.note,
+                        plan.age_limit,
+                        plan.forbid_regions,
+                        plan.express,
+                        source,
+                        plan.sale_status,
+                        id
+                    ],
+                )?;
+                updated += 1;
+            } else {
+                conn.execute(
+                    r#"
+                    INSERT INTO plans (code, grab_code, name, carrier, monthly_price, data_amount,
+                      promo_period, contract_period, first_charge, activation, region, commission, note,
+                      age_limit, forbid_regions, express, source, sale_status)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    "#,
+                    params![
+                        plan.code,
+                        plan.grab_code,
+                        plan.name,
+                        plan.carrier,
+                        plan.monthly_price,
+                        plan.data_amount,
+                        plan.promo_period,
+                        plan.contract_period,
+                        plan.first_charge,
+                        plan.activation,
+                        plan.region,
+                        plan.commission,
+                        plan.note,
+                        plan.age_limit,
+                        plan.forbid_regions,
+                        plan.express,
+                        source,
+                        plan.sale_status
+                    ],
+                )?;
+                imported += 1;
+            }
+        }
+        Ok::<_, crate::error::AppError>(())
+    })();
+
+    match result {
+        Ok(()) => conn.execute_batch("COMMIT")?,
+        Err(err) => {
+            let _ = conn.execute_batch("ROLLBACK");
+            return Err(err);
+        }
+    }
+
+    let backfilled = backfill_card_plan_fields(conn)?;
+    Ok(PlanImportResult {
+        imported,
+        updated,
+        backfilled,
+        total: plans.len() as i64,
+        source: result_source,
+    })
+}
+
+fn map_plan(row: &Row<'_>) -> rusqlite::Result<Plan> {
+    Ok(Plan {
+        id: row.get("id")?,
+        code: row.get("code")?,
+        grab_code: row.get("grab_code")?,
+        name: row.get("name")?,
+        carrier: row.get("carrier")?,
+        monthly_price: row.get::<_, Option<f64>>("monthly_price")?.unwrap_or(0.0),
+        data_amount: row.get::<_, Option<i64>>("data_amount")?.unwrap_or(0),
+        promo_period: row.get::<_, Option<i64>>("promo_period")?.unwrap_or(0),
+        contract_period: row.get::<_, Option<i64>>("contract_period")?.unwrap_or(0),
+        first_charge: row.get::<_, Option<i64>>("first_charge")?.unwrap_or(0),
+        activation: row.get("activation")?,
+        region: row.get("region")?,
+        commission: row.get("commission")?,
+        note: row.get("note")?,
+        age_limit: row.get("age_limit")?,
+        forbid_regions: row.get("forbid_regions")?,
+        express: row.get("express")?,
+        source: row.get("source")?,
+        sale_status: row.get("sale_status")?,
+        created_at: row.get("created_at")?,
+    })
+}
+
+struct NormalizedPlan {
+    code: String,
+    grab_code: String,
+    name: String,
+    carrier: String,
+    monthly_price: f64,
+    data_amount: i64,
+    promo_period: i64,
+    contract_period: i64,
+    first_charge: i64,
+    activation: String,
+    region: String,
+    commission: String,
+    note: String,
+    age_limit: String,
+    forbid_regions: String,
+    express: String,
+    sale_status: String,
+}
+
+fn normalized_plan(value: &Value, source: &str) -> NormalizedPlan {
+    let code = value_string_any(value, &["code", "ProductID", "productId"]);
+    let note = if source == "172号卡平台" {
+        [
+            value_string(value, "taocanDetail"),
+            value_string(value, "settlementRules"),
+            value_string(value, "keywords"),
+            value_string(value, "voice"),
+        ]
+        .into_iter()
+        .filter(|item| !item.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n")
+    } else {
+        value_string(value, "note")
+    };
+    let status = value_string_any(value, &["status", "Status", "saleStatus"]);
+    NormalizedPlan {
+        code,
+        grab_code: value_string_any(value, &["grabCode", "grab_code", "GrabCode"]),
+        name: value_string_any(value, &["name", "ProductName", "productName"]),
+        carrier: value_string_any(value, &["carrier", "Operator", "operator"]),
+        monthly_price: value_f64_any(value, &["monthlyPrice", "monthly_price", "price", "Price"]),
+        data_amount: value_i64_from_any(value, &["dataAmount", "data_amount", "data", "Data"]),
+        promo_period: value_i64_from_any(value, &["promoPeriod", "promo_period", "PromoPeriod"]),
+        contract_period: value_i64_from_any(value, &["contractPeriod", "contract_period", "ContractPeriod"]),
+        first_charge: value_i64_from_any(value, &["firstCharge", "first_charge", "FirstCharge"]),
+        activation: value_string_any(value, &["activation", "Activation"]),
+        region: value_string_any(value, &["region", "Region"])
+            .if_empty("全国"),
+        commission: value_string_any(value, &["commission", "Commission"]),
+        note,
+        age_limit: value_string_any(value, &["ageLimit", "age_limit", "AgeLimit"]),
+        forbid_regions: value_string_any(value, &["forbidRegions", "forbid_regions", "ForbidRegions"]),
+        express: value_string_any(value, &["express", "Express"]),
+        sale_status: if status.contains("下架") || status.contains("停售") {
+            "停售".into()
+        } else {
+            status.if_empty("在售")
+        },
+    }
+}
+
+fn pick_compatible_plan(card_name: &str, mut candidates: Vec<Plan>) -> Option<Plan> {
+    candidates.retain(|plan| is_compatible_plan_match(card_name, plan));
+    candidates.sort_by_key(|plan| -((plan.promo_period + plan.contract_period) as isize));
+    candidates.into_iter().next()
+}
+
+fn is_compatible_plan_match(card_name: &str, plan: &Plan) -> bool {
+    let card_carrier = parse_carrier(card_name);
+    let card_price = parse_monthly_price(card_name);
+    let card_data = parse_data_amount_number(&parse_data_amount(card_name));
+    let plan_price = plan.monthly_price;
+    let plan_data = plan.data_amount;
+
+    if card_carrier != "未知" && plan.carrier.as_deref().unwrap_or("") != card_carrier {
+        return false;
+    }
+    if card_price > 0.0 && plan_price > 0.0 && (card_price - plan_price).abs() > 0.01 {
+        return false;
+    }
+    if card_data > 0 && plan_data > 0 && card_data != plan_data {
+        return false;
+    }
+    true
+}
+
+fn clean_plan_name(value: &str) -> String {
+    let mut result = String::new();
+    let mut in_bracket = false;
+    for ch in value.chars() {
+        if ch == '【' {
+            in_bracket = true;
+            continue;
+        }
+        if ch == '】' {
+            in_bracket = false;
+            continue;
+        }
+        if !in_bracket {
+            result.push(ch);
+        }
+    }
+    result.trim().to_string()
+}
+
+fn resolve_plan_file(app_handle: &tauri::AppHandle, file_path: &str) -> PathBuf {
+    let path = PathBuf::from(file_path);
+    if path.is_absolute() {
+        return path;
+    }
+    if let Ok(resource_dir) = app_handle.path().resource_dir() {
+        let candidate = resource_dir.join(file_path);
+        if candidate.exists() {
+            return candidate;
+        }
+    }
+    std::env::current_dir()
+        .map(|dir| dir.join(file_path))
+        .unwrap_or(path)
+}
+
+fn value_string_any(value: &Value, keys: &[&str]) -> String {
+    keys.iter()
+        .map(|key| value_string(value, key))
+        .find(|text| !text.is_empty())
+        .unwrap_or_default()
+}
+
+fn value_string(value: &Value, key: &str) -> String {
+    match value.get(key) {
+        Some(Value::String(text)) => text.clone(),
+        Some(Value::Number(number)) => number.to_string(),
+        Some(Value::Bool(flag)) => flag.to_string(),
+        _ => String::new(),
+    }
+}
+
+fn value_f64_any(value: &Value, keys: &[&str]) -> f64 {
+    keys.iter()
+        .find_map(|key| value.get(key))
+        .and_then(|value| match value {
+            Value::Number(number) => number.as_f64(),
+            Value::String(text) => parse_first_number(text),
+            _ => None,
+        })
+        .unwrap_or(0.0)
+}
+
+fn value_i64_from_any(value: &Value, keys: &[&str]) -> i64 {
+    let raw = value_string_any(value, keys);
+    if raw.is_empty() {
+        value_f64_any(value, keys) as i64
+    } else {
+        parse_data_amount_number(&raw)
+    }
+}
+
+fn parse_first_number(text: &str) -> Option<f64> {
+    let mut number = String::new();
+    let mut started = false;
+    for ch in text.chars() {
+        if ch.is_ascii_digit() || ch == '.' {
+            number.push(ch);
+            started = true;
+        } else if started {
+            break;
+        }
+    }
+    number.parse::<f64>().ok()
+}
+
+fn previous_month(year: i32, month: u32) -> (i32, u32) {
+    if month == 1 {
+        (year - 1, 12)
+    } else {
+        (year, month - 1)
+    }
+}
+
+fn days_in_month(year: i32, month: u32) -> u32 {
+    let (next_year, next_month) = if month == 12 {
+        (year + 1, 1)
+    } else {
+        (year, month + 1)
+    };
+    let first_next = NaiveDate::from_ymd_opt(next_year, next_month, 1).unwrap();
+    first_next.pred_opt().unwrap().day()
+}
+
+trait EmptyDefault {
+    fn if_empty(self, default: &str) -> String;
+}
+
+impl EmptyDefault for String {
+    fn if_empty(self, default: &str) -> String {
+        if self.is_empty() {
+            default.to_string()
+        } else {
+            self
+        }
+    }
+}
