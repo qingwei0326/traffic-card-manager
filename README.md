@@ -37,7 +37,7 @@ npm run build
 
 打包后的 Windows 安装包位于 `src-tauri/target/release/bundle/nsis/`。
 
-自动更新入口会继续保留，但 Tauri 自动更新将在后续版本接入。
+自动更新使用 Tauri updater + GitHub Releases。安装版应用会从 `https://github.com/qingwei0326/traffic-card-manager/releases/latest/download/latest.json` 检查更新，下载完成后可重启安装。
 
 ## 发布更新
 
@@ -48,7 +48,20 @@ git tag v1.0.0
 git push origin v1.0.0
 ```
 
-Release 工作流会在 Windows 环境运行测试并打包 Tauri Windows 安装包。
+Release 工作流会在 Windows 环境运行测试、打包 Tauri Windows 安装包，并上传安装包、更新包、签名和 `latest.json` 到 GitHub Release。
+
+首次发布前，在 GitHub 仓库 Secrets 中配置：
+
+- `TAURI_SIGNING_PRIVATE_KEY`
+- `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`（如果生成密钥时设置了密码）
+
+本地生成签名密钥：
+
+```bash
+npx tauri signer generate --ci
+```
+
+只把 public key 写入 `src-tauri/tauri.conf.json`，private key 只放入 GitHub Secrets。
 
 ## 数据存储
 
