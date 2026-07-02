@@ -1,6 +1,5 @@
 use crate::error::AppResult;
 use crate::models::{Plan, PlanImportResult};
-use chrono::{Datelike, NaiveDate};
 use rusqlite::{params, Connection, Row};
 use serde_json::Value;
 use std::path::PathBuf;
@@ -77,14 +76,13 @@ pub fn match_plan(conn: &Connection, card_name: &str) -> AppResult<Option<Plan>>
 pub fn backfill_card_plan_fields(conn: &Connection) -> AppResult<i64> {
     let mut stmt = conn.prepare(
         r#"
-        SELECT id, card_name, contract_period, activate_time, promo_start, promo_end
+        SELECT id, card_name, contract_period, activate_time, promo_start
         FROM cards
         WHERE card_name IS NOT NULL
           AND card_name != ''
           AND (
             contract_period IS NULL OR contract_period = 0
             OR promo_start IS NULL OR promo_start = ''
-            OR promo_end IS NULL OR promo_end = ''
           )
         "#,
     )?;
@@ -96,13 +94,12 @@ pub fn backfill_card_plan_fields(conn: &Connection) -> AppResult<i64> {
                 row.get::<_, Option<i64>>("contract_period")?,
                 row.get::<_, Option<String>>("activate_time")?,
                 row.get::<_, Option<String>>("promo_start")?,
-                row.get::<_, Option<String>>("promo_end")?,
             ))
         })?
         .collect::<Result<Vec<_>, _>>()?;
 
     let mut updated = 0;
-    for (id, card_name, contract_period, activate_time, promo_start, promo_end) in rows {
+    for (id, card_name, contract_period, activate_time, promo_start) in rows {
         let Some(plan) = match_plan(conn, &card_name)? else {
             continue;
         };
@@ -114,20 +111,12 @@ pub fn backfill_card_plan_fields(conn: &Connection) -> AppResult<i64> {
             values.push(rusqlite::types::Value::Integer(plan.contract_period));
         }
 
-        let start_time = activate_time.clone().or(promo_start.clone()).unwrap_or_default();
-        if plan.promo_period > 0 && !start_time.is_empty() {
+        if plan.promo_period > 0 {
             if promo_start.as_deref().unwrap_or("").trim().is_empty()
                 && activate_time.as_deref().unwrap_or("").trim() != ""
             {
                 assignments.push("promo_start = ?".into());
                 values.push(rusqlite::types::Value::Text(activate_time.clone().unwrap()));
-            }
-            if promo_end.as_deref().unwrap_or("").trim().is_empty() {
-                let calculated = calculate_promo_end(&start_time, plan.promo_period);
-                if !calculated.is_empty() {
-                    assignments.push("promo_end = ?".into());
-                    values.push(rusqlite::types::Value::Text(calculated));
-                }
             }
         }
 
@@ -147,28 +136,6 @@ pub fn backfill_card_plan_fields(conn: &Connection) -> AppResult<i64> {
 pub fn delete_plan(conn: &Connection, id: i64) -> AppResult<()> {
     conn.execute("DELETE FROM plans WHERE id = ?", params![id])?;
     Ok(())
-}
-
-pub fn calculate_promo_end(start_time: &str, promo_months: i64) -> String {
-    if start_time.trim().is_empty() || promo_months <= 0 {
-        return String::new();
-    }
-    let Ok(start) = NaiveDate::parse_from_str(&start_time[..start_time.len().min(10)], "%Y-%m-%d")
-    else {
-        return String::new();
-    };
-
-    let target_zero_month = start.month0() as i64 + promo_months;
-    let target_year = start.year() + (target_zero_month / 12) as i32;
-    let target_month = (target_zero_month % 12 + 1) as u32;
-    let target_days = days_in_month(target_year, target_month);
-    let result_month = if start.day() > target_days {
-        (target_year, target_month)
-    } else {
-        previous_month(target_year, target_month)
-    };
-    let day = days_in_month(result_month.0, result_month.1);
-    format!("{:04}-{:02}-{:02}", result_month.0, result_month.1, day)
 }
 
 pub(crate) fn parse_monthly_price(plan_name: &str) -> f64 {
@@ -567,24 +534,6 @@ fn parse_first_number(text: &str) -> Option<f64> {
         }
     }
     number.parse::<f64>().ok()
-}
-
-fn previous_month(year: i32, month: u32) -> (i32, u32) {
-    if month == 1 {
-        (year - 1, 12)
-    } else {
-        (year, month - 1)
-    }
-}
-
-fn days_in_month(year: i32, month: u32) -> u32 {
-    let (next_year, next_month) = if month == 12 {
-        (year + 1, 1)
-    } else {
-        (year, month + 1)
-    };
-    let first_next = NaiveDate::from_ymd_opt(next_year, next_month, 1).unwrap();
-    first_next.pred_opt().unwrap().day()
 }
 
 trait EmptyDefault {

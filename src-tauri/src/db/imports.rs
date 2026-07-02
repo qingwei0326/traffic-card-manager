@@ -93,7 +93,7 @@ pub fn import_from_172(conn: &Connection, rows: Vec<Value>) -> AppResult<ImportR
                     apply_time: Some(value_string(row, "下单时间")),
                     activate_time: Some(activate_time.clone()),
                     promo_start: Some(activate_time.clone()),
-                    promo_end: Some(promo_end(matched_plan.as_ref(), &activate_time)),
+                    promo_end: existing.as_ref().and_then(|card| card.promo_end.clone()),
                     phone_number: Some(raw_phone),
                     customer_id,
                     profit: Some(profit),
@@ -225,7 +225,7 @@ pub fn import_from_haoyi(conn: &Connection, rows: Vec<Value>) -> AppResult<Impor
                     apply_time: Some(apply_time),
                     activate_time: Some(activate_time.clone()),
                     promo_start: Some(activate_time.clone()),
-                    promo_end: Some(promo_end(matched_plan.as_ref(), &activate_time)),
+                    promo_end: existing.as_ref().and_then(|card| card.promo_end.clone()),
                     phone_number: Some(raw_phone),
                     customer_id,
                     profit: Some(profit),
@@ -356,15 +356,6 @@ fn find_or_create_customer(
         },
     )?;
     Ok(Some(customer.id))
-}
-
-fn promo_end(plan: Option<&Plan>, activate_time: &str) -> String {
-    if let Some(plan) = plan {
-        if plan.promo_period > 0 && !activate_time.is_empty() {
-            return plans::calculate_promo_end(activate_time, plan.promo_period);
-        }
-    }
-    String::new()
 }
 
 fn finish_import<T>(conn: &Connection, result: Result<T, crate::error::AppError>) -> AppResult<T> {
