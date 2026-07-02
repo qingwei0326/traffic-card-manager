@@ -218,4 +218,5 @@ pub struct Api172Config {
 pub struct UpdateResult {
     pub ok: bool,
     pub message: Option<String>,
+    pub version: Option<String>,
 }

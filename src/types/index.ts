@@ -154,6 +154,7 @@ export interface Api172Config {
 export interface UpdateResult {
   ok: boolean
   message?: string
+  version?: string
 }
 
 export interface AppApi {

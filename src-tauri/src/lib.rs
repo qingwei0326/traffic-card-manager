@@ -6,6 +6,7 @@ mod desktop;
 mod error;
 mod models;
 mod state;
+mod updater;
 
 use tauri::Manager;
 
@@ -25,6 +26,7 @@ pub fn run() {
 
     builder
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             let app_data_dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&app_data_dir)?;
@@ -50,6 +52,7 @@ pub fn run() {
                 migration_error: std::sync::Mutex::new(migration_error),
             });
             app.manage(desktop::DesktopState::default());
+            app.manage(updater::UpdateState::default());
             desktop::setup_desktop(app.handle().clone())?;
 
             Ok(())

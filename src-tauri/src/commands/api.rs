@@ -4,15 +4,6 @@ use crate::models::{Api172Config, PlanImportResult, UpdateResult};
 use crate::state::AppState;
 use tauri::Manager;
 
-const UPDATE_STUB_MESSAGE: &str = "Tauri 自动更新将在后续版本接入";
-
-fn update_stub() -> UpdateResult {
-    UpdateResult {
-        ok: false,
-        message: Some(UPDATE_STUB_MESSAGE.to_string()),
-    }
-}
-
 #[tauri::command]
 pub async fn api172_test_connection(
     config: Api172Config,
@@ -74,18 +65,27 @@ pub fn api_config_save(
 }
 
 #[tauri::command]
-pub async fn update_check() -> AppResult<UpdateResult> {
-    Ok(update_stub())
+pub async fn update_check(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, crate::updater::UpdateState>,
+) -> AppResult<UpdateResult> {
+    crate::updater::check_update(app, state).await
 }
 
 #[tauri::command]
-pub async fn update_download() -> AppResult<UpdateResult> {
-    Ok(update_stub())
+pub async fn update_download(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, crate::updater::UpdateState>,
+) -> AppResult<UpdateResult> {
+    crate::updater::download_update(app, state).await
 }
 
 #[tauri::command]
-pub async fn update_install() -> AppResult<UpdateResult> {
-    Ok(update_stub())
+pub async fn update_install(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, crate::updater::UpdateState>,
+) -> AppResult<UpdateResult> {
+    crate::updater::install_update(app, state).await
 }
 
 #[tauri::command]
