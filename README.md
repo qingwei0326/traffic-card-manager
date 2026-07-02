@@ -48,12 +48,12 @@ git tag v1.0.0
 git push origin v1.0.0
 ```
 
-Release 工作流会在 Windows 环境运行测试、打包 Tauri Windows 安装包，并上传安装包、更新包、签名和 `latest.json` 到 GitHub Release。
+Release 工作流会在 Windows 环境运行测试、打包 Tauri Windows 安装包，并上传安装包、签名和自动生成的 `latest.json` 到 GitHub Release。
 
 首次发布前，在 GitHub 仓库 Secrets 中配置：
 
 - `TAURI_SIGNING_PRIVATE_KEY`
-- `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`（如果生成密钥时设置了密码）
+- `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`（如果生成密钥时设置了密码；无密码密钥可留空）
 
 本地生成签名密钥：
 
