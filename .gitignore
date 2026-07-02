@@ -3,6 +3,9 @@ dist/
 dist-electron/
 dist-test/
 release/
+src-tauri/target/
+src-tauri/gen/
+src-tauri/.cargo/
 .vite/
 .codex/
 .env

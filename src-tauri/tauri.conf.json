@@ -1,0 +1,41 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "流量卡管理系统",
+  "version": "1.0.1",
+  "identifier": "com.traffic-card.manager",
+  "build": {
+    "beforeDevCommand": "npm run dev:renderer",
+    "devUrl": "http://127.0.0.1:5173",
+    "beforeBuildCommand": "npm run build:renderer",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "流量卡管理系统",
+        "width": 1400,
+        "height": 900,
+        "minWidth": 1200,
+        "minHeight": 800,
+        "resizable": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "icon": ["icons/icon.ico", "icons/icon.png"],
+    "resources": ["../data/172-plans.json", "../data/haoyi-plans-parsed.json"],
+    "windows": {
+      "nsis": {
+        "installerIcon": "icons/icon.ico",
+        "installMode": "both",
+        "displayLanguageSelector": false
+      }
+    }
+  }
+}

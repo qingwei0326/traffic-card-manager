@@ -1,49 +1,43 @@
-import { describe, it, expect } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import fs from 'node:fs'
 import path from 'node:path'
 
-const pkg = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../package.json'), 'utf8'))
+const root = path.resolve(__dirname, '..')
+const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
+const tauriConfig = JSON.parse(fs.readFileSync(path.join(root, 'src-tauri/tauri.conf.json'), 'utf8'))
 
-describe('package.json build config', () => {
-  it('electron-builder includes app entry, renderer assets, plan data and sql runtime', () => {
-    expect(pkg.main).toBe('dist-electron/main.js')
-
-    const files = pkg.build.files
-    expect(files).toContain('dist/**/*')
-    expect(files).toContain('dist-electron/**/*')
-    expect(files).toContain('data/**/*')
-    expect(files).toContain('package.json')
-    expect(files).toContain('node_modules/sql.js/**/*')
+describe('Tauri package config', () => {
+  it('uses Tauri scripts and removes Electron entry/config', () => {
+    expect(pkg.main).toBeUndefined()
+    expect(pkg.build).toBeUndefined()
+    expect(pkg.scripts.dev).toBe('tauri dev')
+    expect(pkg.scripts.build).toBe('tauri build')
+    expect(pkg.scripts['dev:renderer']).toBe('vite --host 127.0.0.1')
+    expect(pkg.scripts['build:renderer']).toBe('vite build')
   })
 
-  it('windows build stays offline-friendly and patches executable icon after packaging', () => {
-    expect(pkg.scripts.build).toBe('node scripts/build.js')
-    expect(pkg.scripts.release).toBe('node scripts/build.js --publish never')
-    expect(pkg.build.win.target).toContain('dir')
-    expect(pkg.build.win.target).toContain('nsis')
-    expect(pkg.build.afterPack).toBe('./scripts/update-win-icon.js')
-    expect(pkg.build.win.signAndEditExecutable).toBe(false)
-    expect(pkg.build.win.icon).toBe('build/icon.ico')
-    expect(pkg.devDependencies.resedit).toBeDefined()
+  it('keeps renderer dependencies and removes Electron/sql.js dependencies', () => {
+    expect(pkg.dependencies.react).toBeDefined()
+    expect(pkg.dependencies['@tauri-apps/api']).toBeDefined()
+    expect(pkg.dependencies['sql.js']).toBeUndefined()
+    expect(pkg.dependencies['electron-log']).toBeUndefined()
+    expect(pkg.dependencies['electron-updater']).toBeUndefined()
+    expect(pkg.devDependencies.electron).toBeUndefined()
+    expect(pkg.devDependencies['electron-builder']).toBeUndefined()
+    expect(pkg.devDependencies['vite-plugin-electron']).toBeUndefined()
+    expect(pkg.devDependencies['vite-plugin-electron-renderer']).toBeUndefined()
+    expect(pkg.devDependencies['@tauri-apps/cli']).toBeDefined()
   })
 
-  it('publishes Windows updates through public GitHub Releases', () => {
-    expect(pkg.repository.url).toBe('https://github.com/qingwei0326/traffic-card-manager.git')
-    expect(pkg.build.publish).toEqual([
-      {
-        provider: 'github',
-        owner: 'qingwei0326',
-        repo: 'traffic-card-manager',
-        releaseType: 'release',
-      },
-    ])
-  })
-
-  it('installer lets users choose install path and keeps app data on uninstall', () => {
-    expect(pkg.build.nsis.artifactName).toBe('traffic-card-manager-setup-${version}.${ext}')
-    expect(pkg.build.nsis.oneClick).toBe(false)
-    expect(pkg.build.nsis.allowToChangeInstallationDirectory).toBe(true)
-    expect(pkg.build.nsis.createDesktopShortcut).toBe(true)
-    expect(pkg.build.nsis.deleteAppDataOnUninstall).toBe(false)
+  it('configures the Tauri app, renderer build, bundled data, and Windows installer', () => {
+    expect(tauriConfig.identifier).toBe('com.traffic-card.manager')
+    expect(tauriConfig.productName).toBe('流量卡管理系统')
+    expect(tauriConfig.version).toBe(pkg.version)
+    expect(tauriConfig.build.devUrl).toBe('http://127.0.0.1:5173')
+    expect(tauriConfig.build.frontendDist).toBe('../dist')
+    expect(tauriConfig.bundle.active).toBe(true)
+    expect(tauriConfig.bundle.targets).toContain('nsis')
+    expect(tauriConfig.bundle.resources).toContain('../data/172-plans.json')
+    expect(tauriConfig.bundle.resources).toContain('../data/haoyi-plans-parsed.json')
   })
 })
