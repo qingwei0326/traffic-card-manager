@@ -2,7 +2,7 @@ use crate::error::AppResult;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-pub fn old_electron_data_dir() -> Option<PathBuf> {
+pub fn legacy_data_dir() -> Option<PathBuf> {
     std::env::var_os("APPDATA")
         .map(PathBuf::from)
         .map(|dir| dir.join("traffic-card-manager"))

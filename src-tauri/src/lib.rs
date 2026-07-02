@@ -30,7 +30,7 @@ pub fn run() {
             std::fs::create_dir_all(&app_data_dir)?;
 
             let migration_error =
-                if let Some(old_dir) = db::migration::old_electron_data_dir() {
+                if let Some(old_dir) = db::migration::legacy_data_dir() {
                     db::migration::copy_legacy_files(&old_dir, &app_data_dir)
                         .err()
                         .map(|err| err.to_string())

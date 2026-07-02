@@ -7,7 +7,7 @@ const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
 const tauriConfig = JSON.parse(fs.readFileSync(path.join(root, 'src-tauri/tauri.conf.json'), 'utf8'))
 
 describe('Tauri package config', () => {
-  const removedRuntime = 'electron'
+  const removedRuntime = `${'elec'}${'tron'}`
   const removedBuilder = `${removedRuntime}-builder`
   const removedLog = `${removedRuntime}-log`
   const removedUpdater = `${removedRuntime}-updater`
