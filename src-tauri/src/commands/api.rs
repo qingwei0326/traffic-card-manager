@@ -1,7 +1,17 @@
 use crate::db;
 use crate::error::{AppError, AppResult};
-use crate::models::{Api172Config, PlanImportResult};
+use crate::models::{Api172Config, PlanImportResult, UpdateResult};
 use crate::state::AppState;
+use tauri::Manager;
+
+const UPDATE_STUB_MESSAGE: &str = "Tauri 自动更新将在后续版本接入";
+
+fn update_stub() -> UpdateResult {
+    UpdateResult {
+        ok: false,
+        message: Some(UPDATE_STUB_MESSAGE.to_string()),
+    }
+}
 
 #[tauri::command]
 pub async fn api172_test_connection(
@@ -61,4 +71,49 @@ pub fn api_config_save(
     config: Api172Config,
 ) -> AppResult<()> {
     crate::config_store::save_api_config(&state.config_path, config)
+}
+
+#[tauri::command]
+pub async fn update_check() -> AppResult<UpdateResult> {
+    Ok(update_stub())
+}
+
+#[tauri::command]
+pub async fn update_download() -> AppResult<UpdateResult> {
+    Ok(update_stub())
+}
+
+#[tauri::command]
+pub async fn update_install() -> AppResult<UpdateResult> {
+    Ok(update_stub())
+}
+
+#[tauri::command]
+pub fn app_show_window(app: tauri::AppHandle) -> AppResult<()> {
+    if let Some(window) = app.get_webview_window("main") {
+        window
+            .show()
+            .map_err(|err| AppError::Message(err.to_string()))?;
+        window
+            .set_focus()
+            .map_err(|err| AppError::Message(err.to_string()))?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn app_choose_close_action(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, crate::desktop::DesktopState>,
+    action: String,
+) -> AppResult<()> {
+    crate::desktop::choose_close_action(&app, &state, &action)
+}
+
+#[tauri::command]
+pub fn notifications_check_now(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> AppResult<()> {
+    crate::desktop::check_expiry_notifications(&app, &state, true)
 }

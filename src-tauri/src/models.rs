@@ -213,3 +213,9 @@ pub struct Api172Config {
     pub user_id: String,
     pub secret: String,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateResult {
+    pub ok: bool,
+    pub message: Option<String>,
+}

@@ -2,6 +2,7 @@ mod commands;
 mod api172;
 mod config_store;
 mod db;
+mod desktop;
 mod error;
 mod models;
 mod state;
@@ -48,6 +49,8 @@ pub fn run() {
                 config_path,
                 migration_error: std::sync::Mutex::new(migration_error),
             });
+            app.manage(desktop::DesktopState::default());
+            desktop::setup_desktop(app.handle().clone())?;
 
             Ok(())
         })
@@ -88,6 +91,12 @@ pub fn run() {
             commands::api::api172_get_order_info,
             commands::api::api_config_get,
             commands::api::api_config_save,
+            commands::api::update_check,
+            commands::api::update_download,
+            commands::api::update_install,
+            commands::api::app_show_window,
+            commands::api::app_choose_close_action,
+            commands::api::notifications_check_now,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
