@@ -39,6 +39,8 @@ npm run build
 
 自动更新使用 Tauri updater + GitHub Releases。安装版应用会从 `https://github.com/qingwei0326/traffic-card-manager/releases/latest/download/latest.json` 检查更新，下载完成后可重启安装。
 
+稳定性优化说明：发布流程会先运行前端测试、TypeScript 类型检查和 Rust 测试；172 号卡 API 请求设置了超时并会更清楚地提示空凭证、网络失败和响应格式问题；JSON 备份恢复会保留卡片 ID 和时间戳；订单导入在匹配到套餐且有激活时间时会自动补全缺失的优惠到期日。
+
 ## 发布更新
 
 项目使用 GitHub Releases 作为公开发布源。创建公开仓库 `qingwei0326/traffic-card-manager` 后，推送版本标签会自动构建并发布：
