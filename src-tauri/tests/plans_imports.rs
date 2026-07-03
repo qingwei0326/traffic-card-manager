@@ -259,13 +259,13 @@ fn plan_backfill_does_not_calculate_missing_promo_end() {
 }
 
 #[test]
-fn order_import_does_not_calculate_promo_end_from_matched_plan() {
+fn order_import_calculates_missing_promo_end_from_matched_plan() {
     let conn = conn();
     db::plans::import_plans(
         &conn,
         vec![json!({
             "code": "P006",
-            "name": "不算到期测试移动卡【29元235G】",
+            "name": "自动到期测试移动卡【29元235G】",
             "carrier": "移动",
             "monthlyPrice": 29,
             "dataAmount": 235,
@@ -282,8 +282,8 @@ fn order_import_does_not_calculate_promo_end_from_matched_plan() {
         vec![json!({
             "订单状态": "已结算",
             "激活状态": "已激活",
-            "172订单号": "172-NO-END",
-            "套餐": "不算到期测试移动卡【29元235G】",
+            "172订单号": "172-CALC-END",
+            "套餐": "自动到期测试移动卡【29元235G】",
             "金额": "100",
             "姓名": "赵六",
             "按号码发货": "13600136000",
@@ -299,5 +299,103 @@ fn order_import_does_not_calculate_promo_end_from_matched_plan() {
     assert_eq!(cards.len(), 1);
     assert_eq!(cards[0].contract_period, Some(24));
     assert_eq!(cards[0].promo_start.as_deref(), Some("2026-06-10"));
+    assert_eq!(cards[0].promo_end.as_deref(), Some("2026-11-30"));
+}
+
+#[test]
+fn order_import_does_not_overwrite_existing_promo_end() {
+    let conn = conn();
+    db::plans::import_plans(
+        &conn,
+        vec![json!({
+            "code": "P007",
+            "name": "保留到期测试移动卡【29元235G】",
+            "carrier": "移动",
+            "monthlyPrice": 29,
+            "dataAmount": 235,
+            "promoPeriod": 6,
+            "contractPeriod": 24,
+            "firstCharge": 50,
+            "status": "在售"
+        })],
+    )
+    .unwrap();
+
+    let existing = db::cards::create_card(
+        &conn,
+        models::CardInput {
+            card_name: Some("保留到期测试移动卡【29元235G】".into()),
+            carrier: Some("移动".into()),
+            plan_type: Some("性价比".into()),
+            monthly_price: Some(29.0),
+            data_amount: Some("235G".into()),
+            external_order_id: Some("172-KEEP-END".into()),
+            promo_end: Some("2026-10-31".into()),
+            status: Some("使用中".into()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+
+    db::imports::import_from_172(
+        &conn,
+        vec![json!({
+            "订单状态": "已结算",
+            "激活状态": "已激活",
+            "172订单号": "172-KEEP-END",
+            "套餐": "保留到期测试移动卡【29元235G】",
+            "金额": "100",
+            "姓名": "孙七",
+            "按号码发货": "13500135000",
+            "省份": "福建",
+            "城市": "漳州",
+            "下单时间": "2026-06-01",
+            "激活时间": "2026-06-10"
+        })],
+    )
+    .unwrap();
+
+    let updated = db::cards::get_card_by_id(&conn, existing.id).unwrap().unwrap();
+    assert_eq!(updated.promo_end.as_deref(), Some("2026-10-31"));
+}
+
+#[test]
+fn order_import_keeps_promo_end_empty_without_activation_time() {
+    let conn = conn();
+    db::plans::import_plans(
+        &conn,
+        vec![json!({
+            "code": "P008",
+            "name": "无激活测试移动卡【29元235G】",
+            "carrier": "移动",
+            "monthlyPrice": 29,
+            "dataAmount": 235,
+            "promoPeriod": 6,
+            "contractPeriod": 24,
+            "firstCharge": 50,
+            "status": "在售"
+        })],
+    )
+    .unwrap();
+
+    db::imports::import_from_172(
+        &conn,
+        vec![json!({
+            "订单状态": "已结算",
+            "激活状态": "已激活",
+            "172订单号": "172-NO-ACTIVATE",
+            "套餐": "无激活测试移动卡【29元235G】",
+            "金额": "100",
+            "姓名": "周八",
+            "按号码发货": "13400134000",
+            "省份": "福建",
+            "城市": "漳州",
+            "下单时间": "2026-06-01"
+        })],
+    )
+    .unwrap();
+
+    let cards = db::cards::get_cards(&conn, None).unwrap().data;
+    assert_eq!(cards.len(), 1);
     assert_eq!(cards[0].promo_end.as_deref(), Some(""));
 }

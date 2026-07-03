@@ -1,6 +1,7 @@
 use crate::db::{cards, customers, plans};
 use crate::error::AppResult;
 use crate::models::{Card, CardInput, CustomerInput, ImportResult, Plan};
+use chrono::Datelike;
 use rusqlite::{params, Connection};
 use serde_json::Value;
 
@@ -21,6 +22,7 @@ pub fn import_from_172(conn: &Connection, rows: Vec<Value>) -> AppResult<ImportR
             let plan_name = value_string(row, "套餐");
             let matched_plan = plans::match_plan(conn, &plan_name)?;
             let activate_time = value_string(row, "激活时间");
+            let promo_end = import_promo_end(existing.as_ref(), matched_plan.as_ref(), &activate_time);
             let address = [
                 value_string(row, "省份"),
                 value_string(row, "城市"),
@@ -93,7 +95,7 @@ pub fn import_from_172(conn: &Connection, rows: Vec<Value>) -> AppResult<ImportR
                     apply_time: Some(value_string(row, "下单时间")),
                     activate_time: Some(activate_time.clone()),
                     promo_start: Some(activate_time.clone()),
-                    promo_end: existing.as_ref().and_then(|card| card.promo_end.clone()),
+                    promo_end,
                     phone_number: Some(raw_phone),
                     customer_id,
                     profit: Some(profit),
@@ -175,6 +177,7 @@ pub fn import_from_haoyi(conn: &Connection, rows: Vec<Value>) -> AppResult<Impor
             let amount = parse_amount(&value_string(row, "订单金额"));
             let profit = round2(amount * 0.94);
             let activate_time = excel_date_to_string(&value_string(row, "入网时间"));
+            let promo_end = import_promo_end(existing.as_ref(), matched_plan.as_ref(), &activate_time);
             let apply_time = excel_date_to_string(&value_string(row, "下单时间"));
             let status = if upstream_status == "已激活" || upstream_status == "已开卡" {
                 "使用中"
@@ -225,7 +228,7 @@ pub fn import_from_haoyi(conn: &Connection, rows: Vec<Value>) -> AppResult<Impor
                     apply_time: Some(apply_time),
                     activate_time: Some(activate_time.clone()),
                     promo_start: Some(activate_time.clone()),
-                    promo_end: existing.as_ref().and_then(|card| card.promo_end.clone()),
+                    promo_end,
                     phone_number: Some(raw_phone),
                     customer_id,
                     profit: Some(profit),
@@ -287,6 +290,38 @@ fn build_import_card(
         }
     }
     input
+}
+
+fn import_promo_end(
+    existing: Option<&Card>,
+    matched_plan: Option<&Plan>,
+    activate_time: &str,
+) -> Option<String> {
+    if let Some(existing_end) = existing
+        .and_then(|card| card.promo_end.as_deref())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        return Some(existing_end.to_string());
+    }
+
+    let plan = matched_plan?;
+    calculate_promo_end(activate_time, plan.promo_period)
+}
+
+fn calculate_promo_end(activate_time: &str, promo_period: i64) -> Option<String> {
+    if promo_period <= 0 {
+        return None;
+    }
+    let date_text = activate_time.trim().get(0..10).unwrap_or(activate_time.trim());
+    let start = chrono::NaiveDate::parse_from_str(date_text, "%Y-%m-%d").ok()?;
+    let start_month = i64::from(start.year()) * 12 + i64::from(start.month()) - 1;
+    let target_month = start_month.checked_add(promo_period)?;
+    let target_year = i32::try_from(target_month.div_euclid(12)).ok()?;
+    let target_month = u32::try_from(target_month.rem_euclid(12) + 1).ok()?;
+    let first_day_of_target_month = chrono::NaiveDate::from_ymd_opt(target_year, target_month, 1)?;
+    let end = first_day_of_target_month.pred_opt()?;
+    Some(end.format("%Y-%m-%d").to_string())
 }
 
 fn find_card_by_order(conn: &Connection, order_id: &str) -> AppResult<Option<Card>> {
