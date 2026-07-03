@@ -54,6 +54,22 @@ pub fn get_customers(
     })
 }
 
+pub fn get_all_customers(conn: &Connection) -> AppResult<Vec<Customer>> {
+    let mut stmt = conn.prepare(
+        r#"
+        SELECT c.*,
+          (SELECT COUNT(*) FROM cards WHERE customer_id = c.id) as card_count,
+          (SELECT COALESCE(SUM(profit), 0) FROM cards WHERE customer_id = c.id) as total_profit
+        FROM customers c
+        ORDER BY c.created_at DESC
+        "#,
+    )?;
+    let data = stmt
+        .query_map([], map_customer)?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(data)
+}
+
 pub fn get_customer_by_id(conn: &Connection, id: i64) -> AppResult<Option<Customer>> {
     let mut stmt = conn.prepare(
         r#"

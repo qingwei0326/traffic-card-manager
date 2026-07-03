@@ -82,6 +82,21 @@ pub fn get_cards(
     })
 }
 
+pub fn get_all_cards(conn: &Connection) -> AppResult<Vec<Card>> {
+    let mut stmt = conn.prepare(
+        r#"
+        SELECT c.*, cu.name as customer_name, cu.phone as customer_phone
+        FROM cards c
+        LEFT JOIN customers cu ON c.customer_id = cu.id
+        ORDER BY c.created_at DESC
+        "#,
+    )?;
+    let data = stmt
+        .query_map([], map_card)?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(data)
+}
+
 pub fn get_card_by_id(conn: &Connection, id: i64) -> AppResult<Option<Card>> {
     let mut stmt = conn.prepare(
         r#"
