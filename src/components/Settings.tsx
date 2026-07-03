@@ -256,7 +256,7 @@ export default function Settings({ onRefresh }: SettingsProps) {
       <div className="card p-6">
         <h3 className="text-lg font-semibold text-gray-900 mb-4">🔗 172号卡API配置</h3>
         <p className="text-sm text-gray-500 mb-4">
-          配置172号卡平台API凭证，用于自动同步订单数据。
+          配置172号卡平台API凭证，用于自动同步订单数据。配置会保存在本机应用数据目录，便于下次使用；当前版本不提供系统级凭据加密。
         </p>
 
         <div className="grid grid-cols-2 gap-4 mb-4">
@@ -633,9 +633,9 @@ export default function Settings({ onRefresh }: SettingsProps) {
       <div className="card p-6">
         <h3 className="text-lg font-semibold text-gray-900 mb-4">ℹ️ 关于</h3>
         <div className="space-y-2 text-sm text-gray-600">
-          <p>流量卡管理系统 v1.0</p>
-          <p>本地数据存储，隐私安全</p>
-          <p>基于 Electron + React + SQLite 构建</p>
+          <p>流量卡管理系统 v1.0.1</p>
+          <p>本地数据存储</p>
+          <p>基于 Tauri + React + SQLite 构建</p>
           <p>支持从172号卡平台导入订单数据</p>
           <p>支持172号卡API对接（产品查询、订单查询）</p>
         </div>

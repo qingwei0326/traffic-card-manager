@@ -40,3 +40,29 @@ fn update_progress_percent_is_bounded() {
     assert_eq!(updater::progress_percent(25, Some(0)), 0);
     assert_eq!(updater::progress_percent(25, None), 0);
 }
+
+#[test]
+fn api172_validation_rejects_blank_credentials() {
+    let missing_user = api172::validate_config(&models::Api172Config {
+        user_id: " ".into(),
+        secret: "secret".into(),
+    })
+    .unwrap_err()
+    .to_string();
+    assert_eq!(missing_user, "请输入172号卡 user_id");
+
+    let missing_secret = api172::validate_config(&models::Api172Config {
+        user_id: "user".into(),
+        secret: " ".into(),
+    })
+    .unwrap_err()
+    .to_string();
+    assert_eq!(missing_secret, "请输入172号卡 secret");
+}
+
+#[test]
+fn api172_validation_rejects_blank_order_id_and_sets_timeout() {
+    let missing_order = api172::validate_order_id(" ").unwrap_err().to_string();
+    assert_eq!(missing_order, "请输入订单号");
+    assert_eq!(api172::REQUEST_TIMEOUT_SECS, 15);
+}

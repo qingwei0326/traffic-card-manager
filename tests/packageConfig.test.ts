@@ -70,4 +70,16 @@ describe('Tauri package config', () => {
     expect(releaseWorkflow).toContain('working-directory: src-tauri')
     expect(releaseWorkflow).toContain('run: cargo test')
   })
+
+  it('uses a restrictive Tauri CSP for desktop security', () => {
+    const csp = tauriConfig.app.security.csp
+    expect(typeof csp).toBe('string')
+    expect(csp).toContain("default-src 'self'")
+    expect(csp).toContain("script-src 'self'")
+    expect(csp).toContain("style-src 'self' 'unsafe-inline'")
+    expect(csp).toContain("img-src 'self' data:")
+    expect(csp).toContain('connect-src https://haokaopenapi.lot-ml.com https://github.com')
+    expect(csp).toContain("object-src 'none'")
+    expect(csp).toContain("base-uri 'self'")
+  })
 })
