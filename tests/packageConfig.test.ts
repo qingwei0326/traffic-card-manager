@@ -6,6 +6,7 @@ const root = path.resolve(__dirname, '..')
 const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
 const tauriConfig = JSON.parse(fs.readFileSync(path.join(root, 'src-tauri/tauri.conf.json'), 'utf8'))
 const defaultCapability = JSON.parse(fs.readFileSync(path.join(root, 'src-tauri/capabilities/default.json'), 'utf8'))
+const releaseWorkflow = fs.readFileSync(path.join(root, '.github/workflows/release.yml'), 'utf8')
 const updaterEndpoint = 'https://github.com/qingwei0326/traffic-card-manager/releases/latest/download/latest.json'
 
 describe('Tauri package config', () => {
@@ -58,5 +59,15 @@ describe('Tauri package config', () => {
     expect(typeof tauriConfig.plugins.updater.pubkey).toBe('string')
     expect(tauriConfig.plugins.updater.pubkey.length).toBeGreaterThan(20)
     expect(defaultCapability.permissions).toContain('updater:default')
+  })
+
+  it('gates release builds with frontend tests, typecheck, and Rust tests', () => {
+    expect(pkg.scripts.test).toBe('vitest run')
+    expect(pkg.scripts.typecheck).toBe('tsc --noEmit')
+    expect(pkg.devDependencies['@types/node']).toBeDefined()
+    expect(releaseWorkflow).toContain('run: npm test')
+    expect(releaseWorkflow).toContain('run: npm run typecheck')
+    expect(releaseWorkflow).toContain('working-directory: src-tauri')
+    expect(releaseWorkflow).toContain('run: cargo test')
   })
 })

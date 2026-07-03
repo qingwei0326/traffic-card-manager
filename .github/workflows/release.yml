@@ -36,6 +36,13 @@ jobs:
       - name: Run tests
         run: npm test
 
+      - name: Run typecheck
+        run: npm run typecheck
+
+      - name: Run Rust tests
+        working-directory: src-tauri
+        run: cargo test
+
       - name: Build Windows installer
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
