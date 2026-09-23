@@ -7,6 +7,7 @@ const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
 const tauriConfig = JSON.parse(fs.readFileSync(path.join(root, 'src-tauri/tauri.conf.json'), 'utf8'))
 const defaultCapability = JSON.parse(fs.readFileSync(path.join(root, 'src-tauri/capabilities/default.json'), 'utf8'))
 const releaseWorkflow = fs.readFileSync(path.join(root, '.github/workflows/release.yml'), 'utf8')
+const ciWorkflow = fs.readFileSync(path.join(root, '.github/workflows/ci.yml'), 'utf8')
 const updaterEndpoint = 'https://github.com/qingwei0326/traffic-card-manager/releases/latest/download/latest.json'
 
 describe('Tauri package config', () => {
@@ -61,14 +62,17 @@ describe('Tauri package config', () => {
     expect(defaultCapability.permissions).toContain('updater:default')
   })
 
-  it('gates release builds with frontend tests, typecheck, and Rust tests', () => {
+  it('gates every PR and main push with frontend tests, typecheck, and Rust tests', () => {
     expect(pkg.scripts.test).toBe('vitest run')
     expect(pkg.scripts.typecheck).toBe('tsc --noEmit')
     expect(pkg.devDependencies['@types/node']).toBeDefined()
-    expect(releaseWorkflow).toContain('run: npm test')
-    expect(releaseWorkflow).toContain('run: npm run typecheck')
-    expect(releaseWorkflow).toContain('working-directory: src-tauri')
-    expect(releaseWorkflow).toContain('run: cargo test')
+    // 门禁已从 release.yml 迁到 ci.yml：release 只在 tag 触发，日常 PR / push 由 CI 把关
+    expect(ciWorkflow).toContain('run: npm test')
+    expect(ciWorkflow).toContain('run: npm run typecheck')
+    expect(ciWorkflow).toContain('run: cargo test --manifest-path src-tauri/Cargo.toml')
+    // Windows 必测：NSIS 打包与路径分隔符差异只在 Windows 暴露
+    expect(ciWorkflow).toContain('windows-2022')
+    expect(releaseWorkflow).not.toContain('run: npm test')
   })
 
   it('uses a restrictive Tauri CSP for desktop security', () => {
@@ -78,8 +82,19 @@ describe('Tauri package config', () => {
     expect(csp).toContain("script-src 'self'")
     expect(csp).toContain("style-src 'self' 'unsafe-inline'")
     expect(csp).toContain("img-src 'self' data:")
-    expect(csp).toContain('connect-src https://haokaopenapi.lot-ml.com https://github.com')
     expect(csp).toContain("object-src 'none'")
     expect(csp).toContain("base-uri 'self'")
+  })
+
+  it('allows IPC transport in CSP so invoke does not fall back to postMessage', () => {
+    const connectSrc = /connect-src ([^;]+)/.exec(tauriConfig.app.security.csp)?.[1] ?? ''
+    // Tauri invoke 走 ipc:/http://ipc.localhost，缺失时每次调用会先被 CSP 拦截再降级兜底
+    expect(connectSrc).toContain("'self'")
+    expect(connectSrc).toContain('ipc:')
+    expect(connectSrc).toContain('http://ipc.localhost')
+    expect(connectSrc).toContain('https://haokaopenapi.lot-ml.com')
+    expect(connectSrc).toContain('https://github.com')
+    // 不得放行通配来源
+    expect(connectSrc).not.toContain('*')
   })
 })

@@ -1,19 +1,11 @@
-#[path = "../src/commands/api.rs"]
-mod api_commands;
+// 仅保留本文件实际用到的模块；updater/api172 各自依赖 crate::error 与 crate::models。
+// 移除了未使用的 api_commands / config_store / db / desktop / state，消除大量 dead_code 警告。
 #[path = "../src/api172.rs"]
 mod api172;
-#[path = "../src/config_store.rs"]
-mod config_store;
-#[path = "../src/db/mod.rs"]
-mod db;
-#[path = "../src/desktop.rs"]
-mod desktop;
 #[path = "../src/error.rs"]
 mod error;
 #[path = "../src/models.rs"]
 mod models;
-#[path = "../src/state.rs"]
-mod state;
 #[path = "../src/updater.rs"]
 mod updater;
 

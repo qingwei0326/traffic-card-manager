@@ -1,8 +1,8 @@
-use crate::error::AppResult;
+use crate::error::{AppError, AppResult};
 use crate::models::{Plan, PlanImportResult};
 use rusqlite::{params, Connection, Row};
 use serde_json::Value;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tauri::Manager;
 
 pub fn import_plans(conn: &Connection, plans: Vec<Value>) -> AppResult<PlanImportResult> {
@@ -14,7 +14,7 @@ pub fn import_plans_from_file(
     app_handle: &tauri::AppHandle,
     file_path: String,
 ) -> AppResult<PlanImportResult> {
-    let path = resolve_plan_file(app_handle, &file_path);
+    let path = resolve_plan_file(app_handle, &file_path)?;
     let raw = std::fs::read_to_string(path)?;
     let plans: Vec<Value> = serde_json::from_str(&raw)?;
     if plans.is_empty() {
@@ -470,20 +470,85 @@ fn clean_plan_name(value: &str) -> String {
     result.trim().to_string()
 }
 
-fn resolve_plan_file(app_handle: &tauri::AppHandle, file_path: &str) -> PathBuf {
-    let path = PathBuf::from(file_path);
-    if path.is_absolute() {
-        return path;
+/// 允许作为套餐模板导入的文件名白名单。
+/// 与 `tauri.conf.json` 的 `bundle.resources` 声明保持一一对应，
+/// 任何未在此列表中的文件一律拒绝读取，避免前端借 `plans_import_from_file`
+/// 传入任意绝对路径造成任意文件读取。
+const ALLOWED_PLAN_FILES: &[&str] = &["172-plans.json", "haoyi-plans-parsed.json"];
+
+/// 校验 `file_path` 是白名单内的「纯文件名」。
+///
+/// 拒绝一切包含路径分隔符（`/`、`\`）或上级目录引用（`..`）的输入，
+/// 也拒绝含多余路径组件的写法（如 `data/172-plans.json` 会被要求只传文件名）。
+fn allowed_plan_file_name(file_path: &str) -> AppResult<String> {
+    let trimmed = file_path.trim();
+    let reject = |reason: &str| -> AppResult<String> {
+        Err(AppError::Message(format!(
+            "不支持的套餐文件: {file_path}（{reason}）"
+        )))
+    };
+
+    if trimmed.is_empty() {
+        return reject("文件名为空");
     }
+    if trimmed.contains('/') || trimmed.contains('\\') || trimmed.contains("..") {
+        return reject("只允许白名单内的纯文件名，禁止路径分隔符与 ..");
+    }
+    if PathBuf::from(trimmed).components().count() != 1 {
+        return reject("只允许白名单内的纯文件名");
+    }
+
+    ALLOWED_PLAN_FILES
+        .iter()
+        .find(|allowed| **allowed == trimmed)
+        .map(|allowed| (*allowed).to_string())
+        .ok_or_else(|| {
+            AppError::Message(format!("不支持的套餐文件: {file_path}（不在白名单内）"))
+        })
+}
+
+/// 将 `candidate` 规范化后确认其确实位于 `root` 目录之内。
+///
+/// `canonicalize()` 会展开符号链接，再用 `starts_with` 做前缀校验，
+/// 可防止通过软链接绕过根目录限制。
+fn canonicalize_within_root(root: &Path, candidate: &Path) -> Option<PathBuf> {
+    let canonical_root = root.canonicalize().ok()?;
+    let canonical_target = candidate.canonicalize().ok()?;
+    if canonical_target.starts_with(canonical_root) {
+        Some(canonical_target)
+    } else {
+        None
+    }
+}
+
+/// 将套餐模板文件名解析为实际可读路径。
+///
+/// 解析顺序：打包资源目录 → 当前工作目录下的 `data/` → 当前工作目录。
+/// 每一步都必须通过白名单文件名 + canonicalize 根目录前缀校验。
+fn resolve_plan_file(app_handle: &tauri::AppHandle, file_path: &str) -> AppResult<PathBuf> {
+    let file_name = allowed_plan_file_name(file_path)?;
+
+    let mut roots: Vec<PathBuf> = Vec::new();
     if let Ok(resource_dir) = app_handle.path().resource_dir() {
-        let candidate = resource_dir.join(file_path);
-        if candidate.exists() {
-            return candidate;
+        roots.push(resource_dir);
+    }
+    if let Ok(cwd) = std::env::current_dir() {
+        // 兼容开发态 ./data/*.json 的目录布局。
+        roots.push(cwd.join("data"));
+        roots.push(cwd);
+    }
+
+    let rejected = AppError::Message(format!("不支持的套餐文件: {file_path}"));
+    for root in roots {
+        let Some(resolved) = canonicalize_within_root(&root, &root.join(&file_name)) else {
+            continue;
+        };
+        if resolved.is_file() {
+            return Ok(resolved);
         }
     }
-    std::env::current_dir()
-        .map(|dir| dir.join(file_path))
-        .unwrap_or(path)
+
+    Err(rejected)
 }
 
 fn value_string_any(value: &Value, keys: &[&str]) -> String {

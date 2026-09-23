@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react'
 import { ImportResult, PlanImportResult } from '../types'
 import { appApi } from '../lib/appApi'
+// 用本地时区取当天日期，避免 toISOString() 的 UTC 偏移导致凌晨少一天
+import { todayLocal } from '../lib/date'
 
 interface SettingsProps {
   onRefresh: () => void
@@ -114,7 +116,7 @@ export default function Settings({ onRefresh }: SettingsProps) {
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = `流量卡备份_${new Date().toISOString().slice(0, 10)}.json`
+      a.download = `流量卡备份_${todayLocal()}.json`
       a.click()
       URL.revokeObjectURL(url)
       setBackupResult(`导出成功：${data.cards.length} 张卡片，${data.customers.length} 个客户`)
@@ -560,10 +562,10 @@ export default function Settings({ onRefresh }: SettingsProps) {
         <div className="flex gap-4 flex-wrap">
           <button
             onClick={async () => {
-              if (!confirm('确定要导入172套餐模板吗？\n文件：data/172-plans.json')) return
+              if (!confirm('确定要导入172套餐模板吗？\n文件：172-plans.json')) return
               setImportingPlans(true)
               try {
-                const result = await appApi.plans.importFromFile('data/172-plans.json')
+                const result = await appApi.plans.importFromFile('172-plans.json')
                 setPlanImportResult(`172号卡平台：新增 ${result.imported} 条，更新 ${result.updated} 条，回填老卡 ${result.backfilled} 张（共 ${result.total} 条）`)
                 onRefresh()
               } catch (e: any) {
@@ -580,10 +582,10 @@ export default function Settings({ onRefresh }: SettingsProps) {
 
           <button
             onClick={async () => {
-              if (!confirm('确定要导入号易套餐模板吗？\n文件：data/haoyi-plans-parsed.json')) return
+              if (!confirm('确定要导入号易套餐模板吗？\n文件：haoyi-plans-parsed.json')) return
               setImportingPlans(true)
               try {
-                const result = await appApi.plans.importFromFile('data/haoyi-plans-parsed.json')
+                const result = await appApi.plans.importFromFile('haoyi-plans-parsed.json')
                 setPlanImportResult(`号易平台：新增 ${result.imported} 条，更新 ${result.updated} 条，回填老卡 ${result.backfilled} 张（共 ${result.total} 条）`)
                 onRefresh()
               } catch (e: any) {

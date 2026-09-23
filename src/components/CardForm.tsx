@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react'
 import { Card, Customer } from '../types'
 import { Save, X } from 'lucide-react'
 import { appApi } from '../lib/appApi'
+// 用本地时区取当天日期，避免 toISOString() 的 UTC 偏移导致凌晨少一天
+import { todayLocal } from '../lib/date'
 
 interface CardFormProps {
   card: Card | null
@@ -9,7 +11,7 @@ interface CardFormProps {
   onCancel: () => void
 }
 
-const defaultForm = {
+export const defaultForm = {
   card_name: '',
   carrier: '移动',
   plan_type: '性价比',
@@ -18,7 +20,7 @@ const defaultForm = {
   region: '',
   contract_period: 0,
   renewal_reminder_days: 30,
-  apply_time: new Date().toISOString().split('T')[0],
+  apply_time: todayLocal(),
   activate_time: '',
   promo_months: 0,
   promo_start: '',
@@ -32,7 +34,7 @@ const defaultForm = {
 
 type FormErrors = Partial<Record<keyof typeof defaultForm, string>>
 
-function validateForm(form: typeof defaultForm): FormErrors {
+export function validateForm(form: typeof defaultForm): FormErrors {
   const errors: FormErrors = {}
 
   if (!form.card_name.trim()) {
