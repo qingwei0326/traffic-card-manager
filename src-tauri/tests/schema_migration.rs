@@ -14,7 +14,7 @@ fn initializes_fresh_database_schema() {
     let db_path = dir.path().join("traffic-cards.db");
     let conn = Connection::open(&db_path).unwrap();
 
-    db::schema::init_schema(&conn).unwrap();
+    db::migrations::migrate(&conn).unwrap();
 
     let count: i64 = conn
         .query_row(
@@ -48,7 +48,7 @@ fn copies_old_database_without_modifying_source() {
     fs::write(&old_db, b"legacy-db-bytes").unwrap();
     fs::write(&old_config, r#"{"user_id":"u","secret_enc":"cw=="}"#).unwrap();
 
-    db::migration::copy_legacy_files(old_dir.path(), new_dir.path()).unwrap();
+    db::legacy::copy_legacy_files(old_dir.path(), new_dir.path()).unwrap();
 
     assert_eq!(fs::read(&new_db).unwrap(), b"legacy-db-bytes");
     assert_eq!(

@@ -32,8 +32,8 @@ pub fn run() {
             std::fs::create_dir_all(&app_data_dir)?;
 
             let migration_error =
-                if let Some(old_dir) = db::migration::legacy_data_dir() {
-                    db::migration::copy_legacy_files(&old_dir, &app_data_dir)
+                if let Some(old_dir) = db::legacy::legacy_data_dir() {
+                    db::legacy::copy_legacy_files(&old_dir, &app_data_dir)
                         .err()
                         .map(|err| err.to_string())
                 } else {
@@ -43,7 +43,7 @@ pub fn run() {
             let db_path = app_data_dir.join("traffic-cards.db");
             let config_path = app_data_dir.join("config.json");
             let conn = rusqlite::Connection::open(&db_path)?;
-            db::schema::init_schema(&conn)?;
+            db::migrations::migrate(&conn)?;
 
             app.manage(state::AppState {
                 db: std::sync::Mutex::new(conn),

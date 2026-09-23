@@ -3,6 +3,6 @@ pub mod cards;
 pub mod customers;
 pub mod finance;
 pub mod imports;
-pub mod migration;
+pub mod legacy;
+pub mod migrations;
 pub mod plans;
-pub mod schema;
