@@ -69,7 +69,7 @@ fn backup_export_import_round_trips_cards_and_customers() {
 
     let backup = db::backup::export_data(&source).unwrap();
     let target = conn();
-    let result = db::backup::import_data(&target, backup).unwrap();
+    let result = db::backup::import_data(&target, None, backup).unwrap();
 
     assert_eq!(result["cards"], 1);
     assert_eq!(result["customers"], 1);
@@ -112,7 +112,7 @@ fn backup_import_rolls_back_when_card_references_missing_customer() {
         }]
     });
 
-    assert!(db::backup::import_data(&target, malformed).is_err());
+    assert!(db::backup::import_data(&target, None, malformed).is_err());
     assert!(db::cards::get_card_by_id(&target, existing.id)
         .unwrap()
         .is_some());
@@ -184,7 +184,7 @@ fn backup_import_replaces_existing_cards_and_customers() {
     .unwrap();
 
     let backup = db::backup::export_data(&source).unwrap();
-    let result = db::backup::import_data(&target, backup).unwrap();
+    let result = db::backup::import_data(&target, None, backup).unwrap();
     assert_eq!(result["cards"], 1);
     assert_eq!(result["customers"], 1);
 
@@ -226,7 +226,7 @@ fn backup_import_rolls_back_preserving_both_customers_and_cards() {
         "cards": [{ "card_name": "没有 id 的卡片" }]
     });
 
-    assert!(db::backup::import_data(&target, malformed).is_err());
+    assert!(db::backup::import_data(&target, None, malformed).is_err());
     assert!(db::cards::get_card_by_id(&target, card.id).unwrap().is_some());
     assert!(db::customers::get_customer_by_id(&target, customer.id)
         .unwrap()
@@ -246,12 +246,12 @@ fn backup_import_rejects_payload_missing_required_arrays() {
     )
     .unwrap();
 
-    let missing_cards = db::backup::import_data(&target, serde_json::json!({ "customers": [] }))
+    let missing_cards = db::backup::import_data(&target, None, serde_json::json!({ "customers": [] }))
         .unwrap_err()
         .to_string();
     assert!(missing_cards.contains("cards"), "got: {missing_cards}");
 
-    let missing_customers = db::backup::import_data(&target, serde_json::json!({ "cards": [] }))
+    let missing_customers = db::backup::import_data(&target, None, serde_json::json!({ "cards": [] }))
         .unwrap_err()
         .to_string();
     assert!(

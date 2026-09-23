@@ -130,7 +130,10 @@ export default function Settings({ onRefresh }: SettingsProps) {
       a.download = `流量卡备份_${todayLocal()}.json`
       a.click()
       URL.revokeObjectURL(url)
-      setBackupResult(`导出成功：${data.cards.length} 张卡片，${data.customers.length} 个客户`)
+      const planCount = Array.isArray(data.plans) ? data.plans.length : 0
+      setBackupResult(
+        `导出成功：${data.cards.length} 张卡片，${data.customers.length} 个客户，${planCount} 个套餐`
+      )
     } catch (error) {
       console.error('导出失败:', error)
       alert('导出失败，请重试')
@@ -147,7 +150,14 @@ export default function Settings({ onRefresh }: SettingsProps) {
       const file = (e.target as HTMLInputElement).files?.[0]
       if (!file) return
 
-      if (!confirm('导入将覆盖现有数据，确定继续吗？建议先导出备份。')) return
+      if (
+        !confirm(
+          '导入会清空现有的卡片、客户与套餐，再用备份内容整体覆盖，且无法撤销。\n\n' +
+            '应用会自动把当前数据库另存一份快照，但强烈建议先手动导出一次备份。\n\n' +
+            '确定继续吗？'
+        )
+      )
+        return
 
       setImporting(true)
       try {
@@ -159,7 +169,12 @@ export default function Settings({ onRefresh }: SettingsProps) {
         }
 
         const result = await appApi.backup.import(data)
-        setBackupResult(`导入成功：${result.cards} 张卡片，${result.customers} 个客户`)
+        const planText = result.plans ? `，${result.plans} 个套餐` : ''
+        // 快照路径要让用户看得见：出事时这是唯一的退路
+        const snapshotText = result.backupPath ? `\n导入前快照：${result.backupPath}` : ''
+        setBackupResult(
+          `导入成功：${result.cards} 张卡片，${result.customers} 个客户${planText}${snapshotText}`
+        )
         onRefresh()
       } catch (error) {
         console.error('导入失败:', error)

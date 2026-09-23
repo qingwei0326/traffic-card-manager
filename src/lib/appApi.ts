@@ -3,6 +3,8 @@ import { listen } from '@tauri-apps/api/event'
 import type {
   Api172ConfigStatus,
   AppApi,
+  BackupImportResult,
+  BackupPayload,
   Card,
   Customer,
   ImportResult,
@@ -56,8 +58,8 @@ export const appApi: AppApi = {
     delete: id => call<void>('plans_delete', { id }),
   },
   backup: {
-    export: () => call('backup_export'),
-    import: data => call('backup_import', { data }),
+    export: () => call<BackupPayload>('backup_export'),
+    import: data => call<BackupImportResult>('backup_import', { data }),
   },
   import172: {
     import: rows => call<ImportResult>('import_172', { rows }),

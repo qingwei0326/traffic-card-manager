@@ -1,19 +1,38 @@
-use crate::db::{cards, customers};
+use crate::db::{cards, customers, migrations, plans};
 use crate::error::{AppError, AppResult};
 use rusqlite::Connection;
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
+use std::fs;
+use std::path::Path;
+
+/// 备份文件里标记 payload 校验和的字段名。
+const CHECKSUM_KEY: &str = "checksum";
+const SCHEMA_VERSION_KEY: &str = "schemaVersion";
 
 pub fn export_data(conn: &Connection) -> AppResult<Value> {
-    let cards = cards::get_all_cards(conn)?;
-    let customers = customers::get_all_customers(conn)?;
-    Ok(json!({
-        "cards": cards,
-        "customers": customers,
-        "exportTime": chrono::Local::now().to_rfc3339(),
-    }))
+    let mut payload = json!({
+        SCHEMA_VERSION_KEY: migrations::latest_version(),
+        "exportedAt": chrono::Local::now().to_rfc3339(),
+        "cards": cards::get_all_cards(conn)?,
+        "customers": customers::get_all_customers(conn)?,
+        "plans": plans::get_all_plans(conn)?,
+    });
+
+    // 校验和必须在 checksum 字段**插入之前**算，否则自己算自己永远对不上
+    let checksum = payload_checksum(&payload)?;
+    if let Some(map) = payload.as_object_mut() {
+        map.insert(CHECKSUM_KEY.to_string(), json!(checksum));
+    }
+
+    Ok(payload)
 }
 
-pub fn import_data(conn: &Connection, data: Value) -> AppResult<Value> {
+/// 导入备份。
+///
+/// `db_path` 为 `Some` 时会先整库复制一份快照再动数据——导入是全量覆盖，
+/// 没有退路的操作不该允许发生。传 `None`（内存库，仅测试用）则跳过快照。
+pub fn import_data(conn: &Connection, db_path: Option<&Path>, data: Value) -> AppResult<Value> {
     let cards_data = data
         .get("cards")
         .and_then(Value::as_array)
@@ -22,35 +41,111 @@ pub fn import_data(conn: &Connection, data: Value) -> AppResult<Value> {
         .get("customers")
         .and_then(Value::as_array)
         .ok_or_else(|| AppError::Message("数据格式不正确：缺少 customers 数组".into()))?;
+    // plans 是后加进备份格式的，老备份没有。没有就不动 plans，
+    // 绝不能反过来把现有套餐表清掉——那会让老备份变成一次数据销毁。
+    let plans_data = data.get("plans").and_then(Value::as_array);
 
-    conn.execute_batch("BEGIN TRANSACTION")?;
-    let result = (|| {
-        conn.execute("DELETE FROM cards", [])?;
-        conn.execute("DELETE FROM customers", [])?;
+    verify_schema_version(&data)?;
+    verify_checksum(&data)?;
 
-        for customer in customers_data {
-            insert_customer_snapshot(conn, customer)?;
-        }
+    // 快照必须在开事务之前做：事务一旦开始，文件就不再处于一致状态
+    let backup_path = snapshot_db_file(db_path)?;
 
-        for card in cards_data {
-            insert_card_snapshot(conn, card)?;
-        }
-        Ok::<_, AppError>(())
-    })();
+    let tx = conn.unchecked_transaction()?;
+    tx.execute("DELETE FROM cards", [])?;
+    tx.execute("DELETE FROM customers", [])?;
+    if plans_data.is_some() {
+        tx.execute("DELETE FROM plans", [])?;
+    }
 
-    match result {
-        Ok(()) => conn.execute_batch("COMMIT")?,
-        Err(err) => {
-            let _ = conn.execute_batch("ROLLBACK");
-            return Err(err);
+    for customer in customers_data {
+        insert_customer_snapshot(&tx, customer)?;
+    }
+    for card in cards_data {
+        insert_card_snapshot(&tx, card)?;
+    }
+    if let Some(plans) = plans_data {
+        for plan in plans {
+            insert_plan_snapshot(&tx, plan)?;
         }
     }
+    tx.commit()?;
 
     Ok(json!({
         "success": true,
         "cards": cards_data.len(),
         "customers": customers_data.len(),
+        "plans": plans_data.map(|plans| plans.len()).unwrap_or(0),
+        "backupPath": backup_path,
     }))
+}
+
+/// 把数据库文件复制一份到 `<db 目录>/backups/pre-import-<时间戳>.db`。
+///
+/// 复制失败就让导入失败：拿不到退路还要清全表，是不可接受的。
+fn snapshot_db_file(db_path: Option<&Path>) -> AppResult<Option<String>> {
+    let Some(db_path) = db_path else {
+        return Ok(None);
+    };
+    if !db_path.exists() {
+        return Ok(None);
+    }
+
+    let backup_dir = match db_path.parent() {
+        Some(parent) => parent.join("backups"),
+        None => Path::new("backups").to_path_buf(),
+    };
+    fs::create_dir_all(&backup_dir)?;
+
+    let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
+    let dest = backup_dir.join(format!("pre-import-{stamp}.db"));
+    fs::copy(db_path, &dest)?;
+
+    Ok(Some(dest.to_string_lossy().to_string()))
+}
+
+fn verify_schema_version(data: &Value) -> AppResult<()> {
+    let Some(version) = data.get(SCHEMA_VERSION_KEY).and_then(Value::as_u64) else {
+        // 老备份没写版本号，按当前基线处理
+        return Ok(());
+    };
+
+    let latest = migrations::latest_version() as u64;
+    if version > latest {
+        return Err(AppError::Message(format!(
+            "备份文件的 schema 版本为 {version}，高于当前应用支持的 {latest}。\
+             请升级应用后再导入，否则可能丢失备份中新增的数据。"
+        )));
+    }
+
+    Ok(())
+}
+
+fn verify_checksum(data: &Value) -> AppResult<()> {
+    let Some(expected) = data.get(CHECKSUM_KEY).and_then(Value::as_str) else {
+        return Ok(());
+    };
+
+    let mut payload = data.clone();
+    if let Some(map) = payload.as_object_mut() {
+        map.remove(CHECKSUM_KEY);
+    }
+    let actual = payload_checksum(&payload)?;
+
+    if actual != expected {
+        return Err(AppError::Message(
+            "备份文件校验失败：内容与校验和不符，可能已损坏或被修改。已中止导入，现有数据未改动。"
+                .into(),
+        ));
+    }
+
+    Ok(())
+}
+
+fn payload_checksum(payload: &Value) -> AppResult<String> {
+    // serde_json 的 Map 默认按 key 排序，同一份数据在同一版本里序列化结果稳定
+    let bytes = serde_json::to_vec(payload)?;
+    Ok(format!("{:x}", Sha256::digest(&bytes)))
 }
 
 fn insert_customer_snapshot(conn: &Connection, customer: &Value) -> AppResult<()> {
@@ -114,6 +209,43 @@ fn insert_card_snapshot(conn: &Connection, card: &Value) -> AppResult<()> {
             optional_string(card, "source"),
             optional_string(card, "created_at"),
             optional_string(card, "updated_at"),
+        ],
+    )?;
+    Ok(())
+}
+
+fn insert_plan_snapshot(conn: &Connection, plan: &Value) -> AppResult<()> {
+    conn.execute(
+        r#"
+        INSERT INTO plans (
+          id, code, grab_code, name, carrier, monthly_price, data_amount,
+          promo_period, contract_period, first_charge, activation, region,
+          commission, note, age_limit, forbid_regions, express, source,
+          sale_status, created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        "#,
+        rusqlite::params![
+            required_i64(plan, "id")?,
+            optional_string(plan, "code"),
+            optional_string(plan, "grab_code"),
+            value_string(plan, "name"),
+            optional_string(plan, "carrier"),
+            value_f64(plan, "monthly_price"),
+            value_i64(plan, "data_amount"),
+            value_i64(plan, "promo_period"),
+            value_i64(plan, "contract_period"),
+            value_i64(plan, "first_charge"),
+            optional_string(plan, "activation"),
+            optional_string(plan, "region"),
+            optional_string(plan, "commission"),
+            optional_string(plan, "note"),
+            optional_string(plan, "age_limit"),
+            optional_string(plan, "forbid_regions"),
+            optional_string(plan, "express"),
+            optional_string(plan, "source"),
+            optional_string(plan, "sale_status"),
+            optional_string(plan, "created_at"),
         ],
     )?;
     Ok(())

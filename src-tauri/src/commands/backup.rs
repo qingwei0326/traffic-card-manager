@@ -20,5 +20,5 @@ pub fn backup_import(
         .db
         .lock()
         .map_err(|_| AppError::Message("数据库锁已损坏".into()))?;
-    db::backup::import_data(&conn, data)
+    db::backup::import_data(&conn, Some(&state.db_path), data)
 }

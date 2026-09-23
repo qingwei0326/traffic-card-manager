@@ -146,6 +146,26 @@ export interface Plan {
   created_at: string
 }
 
+/** 备份文件结构。`plans` 是后来才纳入备份的，老备份里没有这一项。 */
+export interface BackupPayload {
+  schemaVersion?: number
+  exportedAt?: string
+  /** 除本字段外全部内容的 SHA-256，用于发现文件损坏或被改 */
+  checksum?: string
+  cards: unknown[]
+  customers: unknown[]
+  plans?: unknown[]
+}
+
+export interface BackupImportResult {
+  success: boolean
+  cards: number
+  customers: number
+  plans: number
+  /** 导入前自动另存的数据库快照路径；内存库或跳过了快照时为空 */
+  backupPath?: string
+}
+
 // 这里**刻意不保留** `Api172Config`（user_id + secret 的旧契约）。
 // secret 现在只存在于 Rust 侧与 OS 钥匙串中，永不穿越 IPC；
 // 留一个能装 plaintext secret 的前端类型，等于给回归留了个现成的坑。
@@ -212,8 +232,8 @@ export interface AppApi {
     delete: (id: number) => Promise<void>
   }
   backup: {
-    export: () => Promise<any>
-    import: (data: any) => Promise<any>
+    export: () => Promise<BackupPayload>
+    import: (data: BackupPayload) => Promise<BackupImportResult>
   }
   import172: {
     import: (rows: unknown[]) => Promise<ImportResult>
