@@ -9,7 +9,8 @@ pub fn import_from_172(conn: &Connection, rows: Vec<Value>) -> AppResult<ImportR
     let mut imported = 0;
     let mut updated = 0;
     let mut skipped = 0;
-    conn.execute_batch("BEGIN TRANSACTION")?;
+    // RAII 事务。事务对象借用同一个 conn，闭包里的语句自然都在事务内。
+    let tx = conn.unchecked_transaction()?;
     let result = (|| {
         for row in &rows {
             let order_status = value_string(row, "订单状态");
@@ -127,7 +128,7 @@ pub fn import_from_172(conn: &Connection, rows: Vec<Value>) -> AppResult<ImportR
         }
         Ok::<_, crate::error::AppError>(())
     })();
-    finish_import(conn, result)?;
+    finish_import(tx, result)?;
     Ok(ImportResult {
         imported,
         updated,
@@ -140,7 +141,7 @@ pub fn import_from_haoyi(conn: &Connection, rows: Vec<Value>) -> AppResult<Impor
     let mut imported = 0;
     let mut updated = 0;
     let mut skipped = 0;
-    conn.execute_batch("BEGIN TRANSACTION")?;
+    let tx = conn.unchecked_transaction()?;
     let result = (|| {
         for row in &rows {
             let upstream_status = value_string(row, "上游订单状态");
@@ -261,7 +262,7 @@ pub fn import_from_haoyi(conn: &Connection, rows: Vec<Value>) -> AppResult<Impor
         }
         Ok::<_, crate::error::AppError>(())
     })();
-    finish_import(conn, result)?;
+    finish_import(tx, result)?;
     Ok(ImportResult {
         imported,
         updated,
@@ -393,16 +394,17 @@ fn find_or_create_customer(
     Ok(Some(customer.id))
 }
 
-fn finish_import<T>(conn: &Connection, result: Result<T, crate::error::AppError>) -> AppResult<T> {
+/// 提交或回滚一个导入事务。
+///
+/// 收下事务的所有权而不是连接：出错时 `tx` 在这里被 drop，未提交的改动自动回滚，
+/// 不需要手工 ROLLBACK，也就不存在「ROLLBACK 自己也失败、错误被 `let _ =` 吞掉」的空窗。
+fn finish_import<T>(tx: rusqlite::Transaction<'_>, result: Result<T, crate::error::AppError>) -> AppResult<T> {
     match result {
         Ok(value) => {
-            conn.execute_batch("COMMIT")?;
+            tx.commit()?;
             Ok(value)
         }
-        Err(err) => {
-            let _ = conn.execute_batch("ROLLBACK");
-            Err(err)
-        }
+        Err(err) => Err(err),
     }
 }
 

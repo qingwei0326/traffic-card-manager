@@ -222,7 +222,7 @@ fn import_plan_values(
 ) -> AppResult<PlanImportResult> {
     let mut imported = 0;
     let mut updated = 0;
-    conn.execute_batch("BEGIN TRANSACTION")?;
+    let tx = conn.unchecked_transaction()?;
     let result = (|| {
         for value in &plans {
             let plan = normalized_plan(value, &source);
@@ -317,18 +317,21 @@ fn import_plan_values(
                 imported += 1;
             }
         }
-        Ok::<_, crate::error::AppError>(())
+        // 回填与导入同属一次操作：回填失败必须整体回滚，
+        // 否则会留下「套餐导入了、卡片字段没补上」的半截状态
+        let backfilled = backfill_card_plan_fields(&tx)?;
+        Ok::<_, crate::error::AppError>(backfilled)
     })();
 
-    match result {
-        Ok(()) => conn.execute_batch("COMMIT")?,
-        Err(err) => {
-            let _ = conn.execute_batch("ROLLBACK");
-            return Err(err);
+    let backfilled = match result {
+        Ok(value) => {
+            tx.commit()?;
+            value
         }
-    }
+        // tx 在这里被 drop，导入与回填一起回滚
+        Err(err) => return Err(err),
+    };
 
-    let backfilled = backfill_card_plan_fields(conn)?;
     Ok(PlanImportResult {
         imported,
         updated,

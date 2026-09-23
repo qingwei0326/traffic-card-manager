@@ -191,15 +191,17 @@ pub fn merge_customers(
         return Ok(MergeResult { merged: 0 });
     }
 
-    conn.execute_batch("BEGIN TRANSACTION")?;
+    // RAII 事务：任何一条语句出错，tx 在析构时自动回滚，
+    // 不需要手工 ROLLBACK（也就不存在「ROLLBACK 自己也失败被吞掉」的空窗）
+    let tx = conn.unchecked_transaction()?;
     let result = (|| {
-        let keep = get_customer_by_id(conn, keep_id)?
+        let keep = get_customer_by_id(&tx, keep_id)?
             .ok_or_else(|| AppError::Message("保留的客户不存在".into()))?;
         let mut tags = split_csv(keep.tags.as_deref());
         let mut notes = keep.notes.into_iter().filter(|note| !note.is_empty()).collect::<Vec<_>>();
 
         for merge_id in &merge_ids {
-            if let Some(customer) = get_customer_by_id(conn, *merge_id)? {
+            if let Some(customer) = get_customer_by_id(&tx, *merge_id)? {
                 tags.extend(split_csv(customer.tags.as_deref()));
                 if let Some(note) = customer.notes.filter(|note| !note.is_empty()) {
                     notes.push(note);
@@ -209,19 +211,19 @@ pub fn merge_customers(
 
         let tag_text = tags.into_iter().collect::<Vec<_>>().join(",");
         let note_text = notes.join("\n---\n");
-        conn.execute(
+        tx.execute(
             "UPDATE customers SET tags = ?, notes = ?, updated_at = datetime('now', 'localtime') WHERE id = ?",
             params![tag_text, note_text, keep_id],
         )?;
 
         for merge_id in &merge_ids {
-            conn.execute(
+            tx.execute(
                 "UPDATE cards SET customer_id = ? WHERE customer_id = ?",
                 params![keep_id, merge_id],
             )?;
         }
         for merge_id in &merge_ids {
-            conn.execute("DELETE FROM customers WHERE id = ?", params![merge_id])?;
+            tx.execute("DELETE FROM customers WHERE id = ?", params![merge_id])?;
         }
 
         Ok::<_, AppError>(MergeResult {
@@ -231,13 +233,11 @@ pub fn merge_customers(
 
     match result {
         Ok(value) => {
-            conn.execute_batch("COMMIT")?;
+            tx.commit()?;
             Ok(value)
         }
-        Err(err) => {
-            let _ = conn.execute_batch("ROLLBACK");
-            Err(err)
-        }
+        // tx 在这里被 drop，未提交的改动随之回滚
+        Err(err) => Err(err),
     }
 }
 
