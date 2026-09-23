@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Plan } from '../types'
 import { appApi } from '../lib/appApi'
+import { planDisplayName } from '../lib/planDisplay'
 
 export default function PlanList() {
   const [plans, setPlans] = useState<Plan[]>([])
@@ -11,6 +12,7 @@ export default function PlanList() {
   const [importing, setImporting] = useState(false)
   const [backfilling, setBackfilling] = useState(false)
   const [notice, setNotice] = useState('')
+  const [error, setError] = useState('')
 
   useEffect(() => {
     loadPlans()
@@ -18,9 +20,16 @@ export default function PlanList() {
 
   const loadPlans = async () => {
     setLoading(true)
-    const data = await appApi.plans.getAll()
-    setPlans(data)
-    setLoading(false)
+    setError('')
+    try {
+      const data = await appApi.plans.getAll()
+      setPlans(data)
+    } catch (err) {
+      console.error('加载套餐失败:', err)
+      setError(err instanceof Error ? err.message : '加载套餐失败，请重试')
+    } finally {
+      setLoading(false)
+    }
   }
 
   const handleImport = async () => {
@@ -60,8 +69,14 @@ export default function PlanList() {
 
   const handleDelete = async (id: number) => {
     if (!confirm('确定删除这个套餐模板？')) return
-    await appApi.plans.delete(id)
-    loadPlans()
+    setError('')
+    try {
+      await appApi.plans.delete(id)
+      loadPlans()
+    } catch (err) {
+      console.error('删除套餐失败:', err)
+      setError('删除套餐失败，请重试')
+    }
   }
 
   // 筛选
@@ -160,7 +175,15 @@ export default function PlanList() {
 
       {/* 表格 */}
       {loading ? (
-        <div className="text-center py-8 text-gray-500">加载中...</div>
+        <div className="text-center py-8 text-gray-500" data-testid="plans-loading">加载中...</div>
+      ) : error ? (
+        <div className="flex flex-col items-center justify-center py-12 text-center px-6" data-testid="plans-error">
+          <div className="text-red-600 font-medium mb-2">套餐数据加载失败</div>
+          <p className="text-sm text-gray-500 mb-4 max-w-xl break-all">{error}</p>
+          <button onClick={loadPlans} className="btn btn-secondary" data-testid="plans-retry">
+            重试
+          </button>
+        </div>
       ) : filtered.length === 0 ? (
         <div className="text-center py-8 text-gray-500">
           {plans.length === 0 ? '暂无套餐数据，请先导入' : '没有匹配的套餐'}
@@ -186,50 +209,53 @@ export default function PlanList() {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100 dark:divide-slate-700">
-              {filtered.map(plan => (
-                <tr key={plan.id} className="hover:bg-gray-50 dark:hover:bg-slate-700/50 transition-colors">
-                  <td className="px-3 py-3 text-sm max-w-[200px] truncate" title={plan.name}>{plan.name}</td>
-                  <td className="px-3 py-3 text-sm">
-                    <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${
-                      plan.carrier === '移动' ? 'bg-blue-100 text-blue-700' :
-                      plan.carrier === '联通' ? 'bg-red-100 text-red-700' :
-                      plan.carrier === '电信' ? 'bg-green-100 text-green-700' :
-                      'bg-purple-100 text-purple-700'
-                    }`}>{plan.carrier}</span>
-                  </td>
-                  <td className="px-3 py-3 text-sm">{plan.monthly_price}元</td>
-                  <td className="px-3 py-3 text-sm">{plan.data_amount}G</td>
-                  <td className="px-3 py-3 text-sm">{plan.promo_period > 0 ? plan.promo_period + '个月' : '-'}</td>
-                  <td className="px-3 py-3 text-sm">{plan.contract_period > 0 ? plan.contract_period + '个月' : '-'}</td>
-                  <td className="px-3 py-3 text-sm">{plan.first_charge > 0 ? plan.first_charge + '元' : '-'}</td>
-                  <td className="px-3 py-3 text-sm">{plan.age_limit || '-'}</td>
-                  <td className="px-3 py-3 text-xs text-gray-500 max-w-[120px] truncate" title={plan.express}>{plan.express || '-'}</td>
-                  <td className="px-3 py-3 text-sm font-medium text-yellow-600">{plan.commission || '-'}</td>
-                  <td className="px-3 py-3 text-xs max-w-[180px] truncate"
-                      title={[plan.region !== '全国' ? `限发: ${plan.region}` : '', plan.forbid_regions ? `禁发: ${plan.forbid_regions}` : ''].filter(Boolean).join('；')}>
-                    {plan.region !== '全国' ? (
-                      <span className="text-blue-600 font-medium">限发 {plan.region}</span>
-                    ) : plan.forbid_regions ? (
-                      <span className="text-orange-600">禁发 {plan.forbid_regions}</span>
-                    ) : (
-                      <span className="text-green-600">全国可发</span>
-                    )}
-                  </td>
-                  <td className="px-3 py-3 text-sm">
-                    <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
-                      plan.sale_status === '在售' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
-                    }`}>
-                      {plan.sale_status || '在售'}
-                    </span>
-                  </td>
-                  <td className="px-3 py-3 text-sm">
-                    <button
-                      onClick={() => handleDelete(plan.id)}
-                      className="text-red-500 hover:text-red-700 text-xs"
-                    >删除</button>
-                  </td>
-                </tr>
-              ))}
+              {filtered.map(plan => {
+                const displayName = planDisplayName(plan.name)
+                return (
+                  <tr key={plan.id} className="hover:bg-gray-50 dark:hover:bg-slate-700/50 transition-colors">
+                    <td className="px-3 py-3 text-sm max-w-[200px] truncate" title={plan.name}>{displayName}</td>
+                    <td className="px-3 py-3 text-sm">
+                      <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${
+                        plan.carrier === '移动' ? 'bg-blue-100 text-blue-700' :
+                        plan.carrier === '联通' ? 'bg-red-100 text-red-700' :
+                        plan.carrier === '电信' ? 'bg-green-100 text-green-700' :
+                        'bg-purple-100 text-purple-700'
+                      }`}>{plan.carrier}</span>
+                    </td>
+                    <td className="px-3 py-3 text-sm">{plan.monthly_price}元</td>
+                    <td className="px-3 py-3 text-sm">{plan.data_amount}G</td>
+                    <td className="px-3 py-3 text-sm">{plan.promo_period > 0 ? plan.promo_period + '个月' : '-'}</td>
+                    <td className="px-3 py-3 text-sm">{plan.contract_period > 0 ? plan.contract_period + '个月' : '-'}</td>
+                    <td className="px-3 py-3 text-sm">{plan.first_charge > 0 ? plan.first_charge + '元' : '-'}</td>
+                    <td className="px-3 py-3 text-sm">{plan.age_limit || '-'}</td>
+                    <td className="px-3 py-3 text-xs text-gray-500 max-w-[120px] truncate" title={plan.express}>{plan.express || '-'}</td>
+                    <td className="px-3 py-3 text-sm font-medium text-yellow-600">{plan.commission || '-'}</td>
+                    <td className="px-3 py-3 text-xs max-w-[180px] truncate"
+                        title={[plan.region !== '全国' ? `限发: ${plan.region}` : '', plan.forbid_regions ? `禁发: ${plan.forbid_regions}` : ''].filter(Boolean).join('；')}>
+                      {plan.region !== '全国' ? (
+                        <span className="text-blue-600 font-medium">限发 {plan.region}</span>
+                      ) : plan.forbid_regions ? (
+                        <span className="text-orange-600">禁发 {plan.forbid_regions}</span>
+                      ) : (
+                        <span className="text-green-600">全国可发</span>
+                      )}
+                    </td>
+                    <td className="px-3 py-3 text-sm">
+                      <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
+                        plan.sale_status === '在售' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+                      }`}>
+                        {plan.sale_status || '在售'}
+                      </span>
+                    </td>
+                    <td className="px-3 py-3 text-sm">
+                      <button
+                        onClick={() => handleDelete(plan.id)}
+                        className="text-red-500 hover:text-red-700 text-xs"
+                      >删除</button>
+                    </td>
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
         </div>

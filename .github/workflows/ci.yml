@@ -41,13 +41,12 @@ jobs:
         run: npm run typecheck
 
   rust:
-    name: Rust tests (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        # Windows 必测：NSIS 打包与路径分隔符差异只在 Windows 暴露。
-        os: [ubuntu-latest, windows-2022]
+    name: Rust tests
+    # 只跑 Windows：tauri.conf.json 的 bundle targets 只有 NSIS，Linux 不产出任何制品。
+    # 而 Tauri 在 Linux 上要编译 webkit2gtk / gtk / dbus 一整套系统库，需要预先 apt 装
+    # 一堆 dev 包——为一份不会发布的产物维护一条易碎的依赖链，不划算。
+    # 将来若真的要发 Linux 版本，把这里改回 matrix 并补上 tauri 官方的 apt 依赖清单即可。
+    runs-on: windows-2022
 
     steps:
       - name: Checkout

@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import type {
-  Api172Config,
+  Api172ConfigStatus,
   AppApi,
   Card,
   Customer,
@@ -65,15 +65,20 @@ export const appApi: AppApi = {
   importHaoyi: {
     import: rows => call<ImportResult>('import_haoyi', { rows }),
   },
+  // 凭证不过 IPC：只传 user_id，secret 由 Rust 侧从钥匙串读取
   api172: {
-    testConnection: (config: Api172Config) => call('api172_test_connection', { config }),
-    getProducts: (config: Api172Config) => call('api172_get_products', { config }),
-    syncProducts: (config: Api172Config) => call('api172_sync_products', { config }),
-    getOrderInfo: (config: Api172Config, orderId: string) => call('api172_get_order_info', { config, orderId }),
+    testConnection: (userId: string) =>
+      call<{ success: boolean; message: string }>('api172_test_connection', { userId }),
+    getProducts: (userId: string) => call('api172_get_products', { userId }),
+    syncProducts: (userId: string) => call<PlanImportResult>('api172_sync_products', { userId }),
+    getOrderInfo: (userId: string, orderId: string) =>
+      call('api172_get_order_info', { userId, orderId }),
   },
   apiConfig: {
-    get: () => call('api_config_get'),
-    save: config => call<void>('api_config_save', { config }),
+    get: () => call<Api172ConfigStatus>('api_config_get'),
+    // secret 为 null 时映射成 Rust 的 None（保留原凭证）
+    save: (userId: string, secret?: string) =>
+      call<Api172ConfigStatus>('api_config_save', { userId, secret: secret ?? null }),
   },
   update: {
     check: () => call('update_check'),

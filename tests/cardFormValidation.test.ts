@@ -111,6 +111,48 @@ describe('validateForm', () => {
         validateForm(form({ activate_time: '', promo_start: '2026-06-09' })).promo_start,
       ).toBeUndefined()
     })
+
+    // promo_start 为空时上面两条依赖它的检查都会跳过，这一条必须单独兜住，
+    // 否则「优惠到期早于激活时间」的脏数据会静默入库。
+    it('rejects promo_end earlier than activate_time when promo_start is blank', () => {
+      const errors = validateForm(
+        form({ activate_time: '2026-06-10', promo_start: '', promo_end: '2026-01-01' }),
+      )
+      expect(errors.promo_end).toBe('优惠到期不能早于激活时间')
+    })
+
+    // 相等仍然合法，规则用 < 而非 <=
+    it('accepts promo_end equal to activate_time', () => {
+      const errors = validateForm(
+        form({ activate_time: '2026-06-10', promo_start: '', promo_end: '2026-06-10' }),
+      )
+      expect(errors.promo_end).toBeUndefined()
+    })
+
+    // promo_end 早于 promo_start 时已有更直接的提示，同一字段不叠加第二条
+    it('reports promo_end once when it precedes both promo_start and activate_time', () => {
+      const errors = validateForm(
+        form({
+          activate_time: '2026-06-10',
+          promo_start: '2026-06-20',
+          promo_end: '2026-06-09',
+        }),
+      )
+      expect(errors.promo_end).toBe('优惠到期不能早于优惠开始')
+    })
+
+    // 防止新校验误拦正常填法（这条比脏输入用例更重要）
+    it('accepts the normal ordering activate_time <= promo_start <= promo_end', () => {
+      const errors = validateForm(
+        form({
+          activate_time: '2026-06-10',
+          promo_start: '2026-06-10',
+          promo_end: '2026-12-31',
+        }),
+      )
+      expect(errors.promo_end).toBeUndefined()
+      expect(errors.promo_start).toBeUndefined()
+    })
   })
 
   describe('aggregate behaviour', () => {

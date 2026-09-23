@@ -146,9 +146,27 @@ export interface Plan {
   created_at: string
 }
 
-export interface Api172Config {
+// 这里**刻意不保留** `Api172Config`（user_id + secret 的旧契约）。
+// secret 现在只存在于 Rust 侧与 OS 钥匙串中，永不穿越 IPC；
+// 留一个能装 plaintext secret 的前端类型，等于给回归留了个现成的坑。
+
+/**
+ * secret 的保护级别，对应 Rust 侧 `Api172SecretSource`。
+ * keyring=系统钥匙串；obfuscated=本地混淆文件；memory=仅内存；
+ * plaintext=明文落盘；none=未配置。
+ */
+export type Api172SecretSource = 'keyring' | 'obfuscated' | 'memory' | 'plaintext' | 'none'
+
+/**
+ * 配置状态。**不含明文 secret**——Rust 侧只返回定长掩码，
+ * 避免凭证在 IPC payload 里来回穿。
+ */
+export interface Api172ConfigStatus {
   user_id: string
-  secret: string
+  configured: boolean
+  source: Api172SecretSource
+  masked_secret?: string
+  warning?: string
 }
 
 export interface UpdateResult {
@@ -203,15 +221,17 @@ export interface AppApi {
   importHaoyi: {
     import: (rows: unknown[]) => Promise<ImportResult>
   }
+  // 只传 user_id，secret 由 Rust 侧从安全存储读取，不经过 IPC
   api172: {
-    testConnection: (config: Api172Config) => Promise<{ success: boolean; message: string }>
-    getProducts: (config: Api172Config) => Promise<any>
-    syncProducts: (config: Api172Config) => Promise<PlanImportResult>
-    getOrderInfo: (config: Api172Config, orderId: string) => Promise<any>
+    testConnection: (userId: string) => Promise<{ success: boolean; message: string }>
+    getProducts: (userId: string) => Promise<any>
+    syncProducts: (userId: string) => Promise<PlanImportResult>
+    getOrderInfo: (userId: string, orderId: string) => Promise<any>
   }
   apiConfig: {
-    get: () => Promise<Api172Config>
-    save: (config: Api172Config) => Promise<void>
+    get: () => Promise<Api172ConfigStatus>
+    // secret 省略=保留原凭证；传空串=清空凭证
+    save: (userId: string, secret?: string) => Promise<Api172ConfigStatus>
   }
   update: {
     check: () => Promise<UpdateResult>

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { ImportResult, PlanImportResult } from '../types'
+import { ImportResult, PlanImportResult, Api172ConfigStatus, Api172SecretSource } from '../types'
 import { appApi } from '../lib/appApi'
 // 用本地时区取当天日期，避免 toISOString() 的 UTC 偏移导致凌晨少一天
 import { todayLocal } from '../lib/date'
@@ -8,15 +8,13 @@ interface SettingsProps {
   onRefresh: () => void
 }
 
-interface Api172Config {
-  user_id: string
-  secret: string
-}
-
-// 默认配置（空，从 localStorage 加载）
-const DEFAULT_CONFIG: Api172Config = {
-  user_id: '',
-  secret: '',
+// secret 的保护级别 → 人话。keyring 是最理想状态，无需额外提示。
+const SOURCE_TEXT: Record<Api172SecretSource, string> = {
+  keyring: '已存入系统钥匙串',
+  obfuscated: '本地混淆保存',
+  memory: '仅内存保存',
+  plaintext: '明文保存',
+  none: '未配置',
 }
 
 export default function Settings({ onRefresh }: SettingsProps) {
@@ -26,7 +24,10 @@ export default function Settings({ onRefresh }: SettingsProps) {
   const [importingHaoyi, setImportingHaoyi] = useState(false)
   const [importingPlans, setImportingPlans] = useState(false)
   const [planImportResult, setPlanImportResult] = useState('')
-  const [apiConfig, setApiConfig] = useState<Api172Config>(DEFAULT_CONFIG)
+  // 账号明文保留在前端（非敏感），secret 永远不回填到界面
+  const [apiUserId, setApiUserId] = useState('')
+  const [apiSecret, setApiSecret] = useState('')
+  const [apiStatus, setApiStatus] = useState<Api172ConfigStatus | null>(null)
   const [testingApi, setTestingApi] = useState(false)
   const [apiTestResult, setApiTestResult] = useState<{ success: boolean; message: string } | null>(null)
   const [apiConfigSaved, setApiConfigSaved] = useState(false)
@@ -51,26 +52,36 @@ export default function Settings({ onRefresh }: SettingsProps) {
   const [previewSkippedReason, setPreviewSkippedReason] = useState('')
   const [previewLoading, setPreviewLoading] = useState(false)
 
-  // 加载保存的配置（从主进程安全存储）
+  // 加载配置状态（只含 user_id / 掩码，secret 本体留在 Rust 侧）
   useEffect(() => {
-    appApi.apiConfig.get().then(config => {
-      if (config.user_id || config.secret) {
-        setApiConfig(config)
-      }
-    }).catch(() => {})
+    appApi.apiConfig
+      .get()
+      .then(status => {
+        setApiUserId(status.user_id)
+        setApiStatus(status)
+      })
+      .catch(() => {})
   }, [])
 
   const handleSaveApiConfig = async () => {
-    await appApi.apiConfig.save(apiConfig)
-    setApiConfigSaved(true)
-    setTimeout(() => setApiConfigSaved(false), 2000)
+    try {
+      // secret 留空 = 不动已存凭证，避免「只改账号」把 secret 洗掉
+      const trimmed = apiSecret.trim()
+      const status = await appApi.apiConfig.save(apiUserId, trimmed === '' ? undefined : trimmed)
+      setApiStatus(status)
+      setApiSecret('')
+      setApiConfigSaved(true)
+      setTimeout(() => setApiConfigSaved(false), 2000)
+    } catch (error: any) {
+      alert(`保存失败：${error?.message ?? error}`)
+    }
   }
 
   const handleTestApi = async () => {
     setTestingApi(true)
     setApiTestResult(null)
     try {
-      const result = await appApi.api172.testConnection(apiConfig)
+      const result = await appApi.api172.testConnection(apiUserId)
       setApiTestResult(result)
     } catch (error: any) {
       setApiTestResult({ success: false, message: `测试失败: ${error.message}` })
@@ -83,7 +94,7 @@ export default function Settings({ onRefresh }: SettingsProps) {
     setSyncingProducts(true)
     setSyncResult(null)
     try {
-      const result = await appApi.api172.syncProducts(apiConfig)
+      const result = await appApi.api172.syncProducts(apiUserId)
       setSyncResult(result)
       onRefresh()
     } catch (error: any) {
@@ -98,7 +109,7 @@ export default function Settings({ onRefresh }: SettingsProps) {
     setQueryingOrder(true)
     setOrderQueryResult(null)
     try {
-      const result = await appApi.api172.getOrderInfo(apiConfig, orderQueryId.trim())
+      const result = await appApi.api172.getOrderInfo(apiUserId, orderQueryId.trim())
       setOrderQueryResult(result)
     } catch (error: any) {
       setOrderQueryResult({ code: -1, message: '查询失败: ' + error.message })
@@ -258,16 +269,26 @@ export default function Settings({ onRefresh }: SettingsProps) {
       <div className="card p-6">
         <h3 className="text-lg font-semibold text-gray-900 mb-4">🔗 172号卡API配置</h3>
         <p className="text-sm text-gray-500 mb-4">
-          配置172号卡平台API凭证，用于自动同步订单数据。配置会保存在本机应用数据目录，便于下次使用；当前版本不提供系统级凭据加密。
+          secret 会写入操作系统钥匙串（Windows 凭据管理器 / macOS 钥匙串），不再以明文或 base64
+          保存在配置文件中，也不会回显到界面。旧版本遗留的配置会在首次读取时自动搬迁。
         </p>
+
+        {apiStatus?.warning && (
+          <div
+            data-testid="api-secret-warning"
+            className="mb-4 p-3 rounded-lg text-sm bg-yellow-50 text-yellow-800"
+          >
+            {apiStatus.warning}
+          </div>
+        )}
 
         <div className="grid grid-cols-2 gap-4 mb-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">user_id（登录账号）</label>
             <input
               type="text"
-              value={apiConfig.user_id}
-              onChange={e => setApiConfig(prev => ({ ...prev, user_id: e.target.value }))}
+              value={apiUserId}
+              onChange={e => setApiUserId(e.target.value)}
               placeholder="172号卡登录账号"
               className="input"
             />
@@ -276,11 +297,15 @@ export default function Settings({ onRefresh }: SettingsProps) {
             <label className="block text-sm font-medium text-gray-700 mb-1">secret（密钥）</label>
             <input
               type="password"
-              value={apiConfig.secret}
-              onChange={e => setApiConfig(prev => ({ ...prev, secret: e.target.value }))}
-              placeholder="向管理员获取密钥"
+              value={apiSecret}
+              onChange={e => setApiSecret(e.target.value)}
+              placeholder={apiStatus?.configured ? `已保存（${apiStatus.masked_secret ?? '••••••••'}），留空则不修改` : '向管理员获取密钥'}
+              data-testid="api-secret-input"
               className="input"
             />
+            <p className="mt-1 text-xs text-gray-400" data-testid="api-secret-source">
+              {apiStatus ? SOURCE_TEXT[apiStatus.source] : '加载中...'}
+            </p>
           </div>
         </div>
 
@@ -298,6 +323,24 @@ export default function Settings({ onRefresh }: SettingsProps) {
           >
             {testingApi ? '测试中...' : '🔌 测试连接'}
           </button>
+          {apiStatus?.configured && (
+            <button
+              onClick={() => {
+                if (!confirm('确定要清除已保存的 secret 吗？清除后需要重新填写。')) return
+                appApi.apiConfig
+                  .save(apiUserId, '')
+                  .then(status => {
+                    setApiStatus(status)
+                    setApiSecret('')
+                  })
+                  .catch((error: any) => alert(`清除失败：${error?.message ?? error}`))
+              }}
+              data-testid="api-secret-clear"
+              className="btn btn-secondary"
+            >
+              🗑 清除密钥
+            </button>
+          )}
         </div>
 
         {apiTestResult && (

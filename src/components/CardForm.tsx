@@ -69,6 +69,18 @@ export function validateForm(form: typeof defaultForm): FormErrors {
     errors.promo_start = '优惠开始不能早于激活时间'
   }
 
+  // promo_start 为空时，上面两条依赖 promo_start 的检查都会跳过，
+  // 单独兜住「优惠到期早于激活时间」，避免脏数据静默入库。
+  // promo_end 若已因早于 promo_start 报错，则不再叠加——同一字段只给一条最直接的提示。
+  if (
+    !errors.promo_end &&
+    form.activate_time &&
+    form.promo_end &&
+    form.promo_end < form.activate_time
+  ) {
+    errors.promo_end = '优惠到期不能早于激活时间'
+  }
+
   return errors
 }
 

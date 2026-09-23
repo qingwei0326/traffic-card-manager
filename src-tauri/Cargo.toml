@@ -25,6 +25,10 @@ tauri-plugin-single-instance = "2"
 tauri-plugin-updater = "2"
 thiserror = "2"
 tokio = { version = "1", features = ["time"] }
+# 关掉默认特性：默认的 sync-secret-service 会拉进 secret-service → libdbus-sys，
+# 而后者靠 pkg-config 找 libdbus-1-dev，CI 的 ubuntu runner 上没有，会直接编译失败。
+# 只启用两端原生后端：Windows 凭据管理器 / Linux keyutils（纯 Rust，无 C 依赖）。
+keyring = { version = "3", default-features = false, features = ["windows-native", "linux-native"] }
 
 [dev-dependencies]
 tempfile = "3"

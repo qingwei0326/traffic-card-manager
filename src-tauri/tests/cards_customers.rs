@@ -1,17 +1,6 @@
-use rusqlite::Connection;
-
-#[path = "../src/db/mod.rs"]
-mod db;
-#[path = "../src/error.rs"]
-mod error;
-#[path = "../src/models.rs"]
-mod models;
-
-fn conn() -> Connection {
-    let conn = Connection::open_in_memory().unwrap();
-    db::schema::init_schema(&conn).unwrap();
-    conn
-}
+mod common;
+pub use common::{db, error, models};
+use common::conn;
 
 #[test]
 fn partial_card_update_preserves_existing_fields() {
@@ -57,6 +46,104 @@ fn partial_card_update_preserves_existing_fields() {
     assert_eq!(updated.region.unwrap(), "福建·漳州");
     assert_eq!(updated.profit, 88.0);
     assert_eq!(updated.notes.unwrap(), "保留备注");
+}
+
+#[test]
+fn update_card_treats_some_zero_as_a_real_value() {
+    // Some(0.0) 是"把利润改成 0"，不能被当成"未填写"而保留原值。
+    // 若日后有人把 merge 逻辑改成按 falsy 判断，这条会立刻红。
+    let conn = conn();
+    let created = db::cards::create_card(
+        &conn,
+        models::CardInput {
+            card_name: Some("清零利润测试卡".into()),
+            carrier: Some("移动".into()),
+            plan_type: Some("性价比".into()),
+            profit: Some(88.0),
+            renewal_reminder_days: Some(15),
+            status: Some("使用中".into()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+
+    let updated = db::cards::update_card(
+        &conn,
+        created.id,
+        models::CardInput {
+            profit: Some(0.0),
+            renewal_reminder_days: Some(0),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+
+    assert_eq!(updated.profit, 0.0);
+    assert_eq!(updated.renewal_reminder_days, Some(0));
+    // 未传的字段仍然保留
+    assert_eq!(updated.card_name, "清零利润测试卡");
+    assert_eq!(updated.status, "使用中");
+}
+
+#[test]
+fn update_card_with_empty_string_overwrites_rather_than_preserving() {
+    // merge 用的是 Option::or：Some("") 表示"显式改成空"，只有 None 才是"不动"。
+    // 这里是锁定当前语义，前端若要局部更新必须传 None 而非空串。
+    let conn = conn();
+    let created = db::cards::create_card(
+        &conn,
+        models::CardInput {
+            card_name: Some("原名".into()),
+            carrier: Some("移动".into()),
+            plan_type: Some("性价比".into()),
+            notes: Some("原备注".into()),
+            status: Some("使用中".into()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+
+    let updated = db::cards::update_card(
+        &conn,
+        created.id,
+        models::CardInput {
+            card_name: Some(String::new()),
+            notes: Some(String::new()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+
+    assert_eq!(updated.card_name, "");
+    assert_eq!(updated.notes.as_deref(), Some(""));
+    // 同样传空串 vs 完全不传，结果必须不同
+    let untouched = db::cards::update_card(
+        &conn,
+        created.id,
+        models::CardInput {
+            carrier: Some("联通".into()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(untouched.carrier, "联通");
+    assert_eq!(untouched.plan_type, "性价比");
+}
+
+#[test]
+fn update_card_rejects_missing_id_without_panicking() {
+    let conn = conn();
+    let error = db::cards::update_card(
+        &conn,
+        9999,
+        models::CardInput {
+            status: Some("使用中".into()),
+            ..Default::default()
+        },
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(error.contains("卡片不存在"), "got: {error}");
 }
 
 #[test]

@@ -214,6 +214,35 @@ pub struct Api172Config {
     pub secret: String,
 }
 
+/// secret 当前的保护级别，用于 UI 明确告知用户凭证是否真的被保护。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Api172SecretSource {
+    /// 存在 OS 钥匙串（Windows 凭据管理器 / macOS Keychain 等）
+    Keyring,
+    /// 钥匙串不可用，退回本地混淆文件（非加密）
+    Obfuscated,
+    /// 仅进程内存缓存，重启即失效
+    Memory,
+    /// 明文落盘，最坏情况
+    Plaintext,
+    None,
+}
+
+/// 返回给前端的配置状态。
+///
+/// 安全约定：**secret 永不穿越 IPC**。前端只能拿到是否配置、定长掩码
+/// 与保护级别，够渲染 UI，不足以还原凭证。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Api172ConfigStatus {
+    pub user_id: String,
+    pub configured: bool,
+    pub source: Api172SecretSource,
+    /// 定长掩码，刻意不暴露真实长度
+    pub masked_secret: Option<String>,
+    pub warning: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateResult {
     pub ok: bool,

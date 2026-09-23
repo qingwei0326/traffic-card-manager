@@ -18,5 +18,5 @@
     "esModuleInterop": true,
     "types": ["node"]
   },
-  "include": ["vite.config.ts", "electron"]
+  "include": ["vite.config.ts"]
 }

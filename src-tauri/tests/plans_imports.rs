@@ -1,17 +1,133 @@
-use rusqlite::Connection;
 use serde_json::json;
 
-#[path = "../src/db/mod.rs"]
-mod db;
-#[path = "../src/error.rs"]
-mod error;
-#[path = "../src/models.rs"]
-mod models;
+mod common;
+pub use common::{db, error, models};
+use common::conn;
 
-fn conn() -> Connection {
-    let conn = Connection::open_in_memory().unwrap();
-    db::schema::init_schema(&conn).unwrap();
-    conn
+fn row_172(order_id: &str, order_status: &str, amount: &str) -> serde_json::Value {
+    serde_json::json!({
+        "订单状态": order_status,
+        "激活状态": "已激活",
+        "172订单号": order_id,
+        "套餐": "福建移动专享卡【29元235G】",
+        "金额": amount,
+        "首充金额": "50",
+        "姓名": "测试用户",
+        "按号码发货": "13800138000",
+        "省份": "福建",
+        "城市": "漳州",
+        "下单时间": "2026-06-01",
+        "激活时间": "2026-06-10"
+    })
+}
+
+#[test]
+fn reimporting_same_172_row_is_idempotent() {
+    let conn = conn();
+    let row = row_172("172-IDEM-1", "已结算", "100");
+
+    let first = db::imports::import_from_172(&conn, vec![row.clone()]).unwrap();
+    assert_eq!(first.imported, 1);
+    assert_eq!(first.updated, 0);
+
+    // 重复导入必须走 update 而不是再插一条，否则用户每导一次就多一张重复卡
+    let second = db::imports::import_from_172(&conn, vec![row.clone()]).unwrap();
+    assert_eq!(second.imported, 0);
+    assert_eq!(second.updated, 1);
+
+    let third = db::imports::import_from_172(&conn, vec![row]).unwrap();
+    assert_eq!(third.imported, 0);
+    assert_eq!(third.updated, 1);
+
+    let cards = db::cards::get_cards(&conn, None).unwrap();
+    assert_eq!(cards.total, 1);
+    assert_eq!(cards.data[0].external_order_id.as_deref(), Some("172-IDEM-1"));
+    assert_eq!(cards.data[0].profit, 94.0);
+    assert_eq!(cards.data[0].status, "使用中");
+}
+
+#[test]
+fn import_tolerates_blank_and_malformed_amounts() {
+    let conn = conn();
+    // 金额为空 / 非数字 / 带货币符号三类脏数据都不能 panic，且换算口径要正确
+    let rows = vec![
+        row_172("172-AMT-EMPTY", "已结算", ""),
+        row_172("172-AMT-JUNK", "已结算", "abc"),
+        row_172("172-AMT-SYMBOL", "已结算", "¥100元"),
+    ];
+    let result = db::imports::import_from_172(&conn, rows).unwrap();
+    assert_eq!(result.imported, 3);
+
+    let cards = db::cards::get_cards(&conn, None).unwrap().data;
+    let profit_of = |order_id: &str| {
+        cards
+            .iter()
+            .find(|card| card.external_order_id.as_deref() == Some(order_id))
+            .unwrap()
+            .profit
+    };
+    assert_eq!(profit_of("172-AMT-EMPTY"), 0.0);
+    assert_eq!(profit_of("172-AMT-JUNK"), 0.0);
+    assert_eq!(profit_of("172-AMT-SYMBOL"), 94.0);
+}
+
+#[test]
+fn import_skips_cancelled_and_rejected_orders() {
+    let conn = conn();
+    let rows = vec![
+        row_172("172-SKIP-CANCEL", "已撤单", "100"),
+        row_172("172-SKIP-REJECT", "审核不通过", "100"),
+        row_172("172-SKIP-KEEP", "已结算", "100"),
+    ];
+    let result = db::imports::import_from_172(&conn, rows).unwrap();
+    assert_eq!(result.total, 3);
+    assert_eq!(result.skipped, 2);
+    assert_eq!(result.imported, 1);
+
+    let cards = db::cards::get_cards(&conn, None).unwrap().data;
+    assert_eq!(cards.len(), 1);
+    assert_eq!(cards[0].external_order_id.as_deref(), Some("172-SKIP-KEEP"));
+}
+
+#[test]
+fn import_creates_card_from_minimal_row_without_panicking() {
+    let conn = conn();
+    // 只有订单号与状态的极简行：所有可选字段缺失也不能让导入崩掉
+    let result = db::imports::import_from_172(
+        &conn,
+        vec![serde_json::json!({ "172订单号": "172-MINIMAL", "订单状态": "已发货" })],
+    )
+    .unwrap();
+    assert_eq!(result.imported, 1);
+    assert_eq!(db::cards::get_cards(&conn, None).unwrap().total, 1);
+}
+
+#[test]
+fn large_batch_import_counts_every_row() {
+    let conn = conn();
+    let rows: Vec<_> = (0..200)
+        .map(|index| row_172(&format!("172-BATCH-{index}"), "已结算", "100"))
+        .collect();
+    let result = db::imports::import_from_172(&conn, rows).unwrap();
+    assert_eq!(result.imported, 200);
+    assert_eq!(result.updated, 0);
+    assert_eq!(result.skipped, 0);
+    assert_eq!(result.total, 200);
+    assert_eq!(db::cards::get_cards(&conn, None).unwrap().total, 200);
+}
+
+#[test]
+fn large_batch_import_mixes_imported_and_skipped_rows() {
+    let conn = conn();
+    let rows: Vec<_> = (0..150)
+        .map(|index| row_172(&format!("172-MIX-OK-{index}"), "已结算", "100"))
+        .chain((0..50).map(|index| row_172(&format!("172-MIX-BAD-{index}"), "已撤单", "100")))
+        .collect();
+    let result = db::imports::import_from_172(&conn, rows).unwrap();
+    assert_eq!(result.imported, 150);
+    assert_eq!(result.skipped, 50);
+    assert_eq!(result.total, 200);
+    assert_eq!(db::cards::get_cards(&conn, None).unwrap().total, 150);
 }
 
 #[test]
