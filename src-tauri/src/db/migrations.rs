@@ -25,11 +25,18 @@ pub(crate) struct Migration {
 }
 
 /// 迁移清单。**只能往后追加**，改已有条目等于让线上已有的库与新代码对不上账。
-static MIGRATIONS: &[Migration] = &[Migration {
-    version: 1,
-    description: "基线：建表、补齐历史遗留列、建索引",
-    up: baseline_v1,
-}];
+static MIGRATIONS: &[Migration] = &[
+    Migration {
+        version: 1,
+        description: "基线：建表、补齐历史遗留列、建索引",
+        up: baseline_v1,
+    },
+    Migration {
+        version: 2,
+        description: "读写性能索引：customers(name,phone)、cards(external_order_id)",
+        up: migrations_v2,
+    },
+];
 
 /// 本程序认识的最高版本。
 pub fn latest_version() -> u32 {
@@ -48,6 +55,15 @@ pub(crate) fn current_version(conn: &Connection) -> AppResult<u32> {
 pub fn migrate(conn: &Connection) -> AppResult<()> {
     conn.execute_batch("PRAGMA foreign_keys = ON;")?;
     run_pending(conn, MIGRATIONS)
+}
+
+/// 测试用：只跑到 v1 基线（建表 + 补列 + v1 索引），**不含** v2 的性能索引。
+///
+/// 这样测试用例可以先在一份「只有 v1」的库里塞脏数据，再调 [`migrate`]
+/// 触发 v2 的降级分支，验证 `external_order_id` 重复/空串哨兵场景下不会误上 UNIQUE。
+pub fn migrate_to_baseline(conn: &Connection) -> AppResult<()> {
+    conn.execute_batch("PRAGMA foreign_keys = ON;")?;
+    run_pending(conn, std::slice::from_ref(&MIGRATIONS[0]))
 }
 
 /// 依次执行版本号大于当前版本的所有迁移，整体作为一个事务。
@@ -196,6 +212,50 @@ fn baseline_v1(conn: &Connection) -> AppResult<()> {
         CREATE INDEX IF NOT EXISTS idx_plans_carrier ON plans(carrier);
         "#,
     )?;
+
+    Ok(())
+}
+
+/// v2：读写性能索引。
+fn migrations_v2(conn: &Connection) -> AppResult<()> {
+    // 客户去重检测常用 (name, phone)，复合索引直接加速
+    conn.execute_batch(
+        "CREATE INDEX IF NOT EXISTS idx_customers_name_phone ON customers(name, phone)",
+    )?;
+
+    // cards.external_order_id 理论上唯一，但**不能无脑上 UNIQUE**：
+    // 非 172 来源卡的 external_order_id 用空串 '' 当哨兵值，多条 '' 会让 UNIQUE 索引
+    // 在建索引或后续插入时报冲突。所以先查真实重复（非空且去重后）与空串哨兵：
+    //   - 两者都为零 → 库是干净的，可以给 UNIQUE，顺带兜底数据完整性
+    //   - 任一非零 → 退化成普通索引，绝不因为索引创建失败把整次迁移搞崩
+    let real_duplicates: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM (
+           SELECT external_order_id FROM cards
+           WHERE external_order_id IS NOT NULL AND external_order_id != ''
+           GROUP BY external_order_id HAVING COUNT(*) > 1
+         )",
+        [],
+        |row| row.get(0),
+    )?;
+    let empty_sentinels: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM cards WHERE external_order_id = ''",
+        [],
+        |row| row.get(0),
+    )?;
+
+    if real_duplicates == 0 && empty_sentinels == 0 {
+        conn.execute_batch(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_cards_external_order_id ON cards(external_order_id)",
+        )?;
+    } else {
+        eprintln!(
+            "[warn] cards.external_order_id 存在重复值({real_duplicates})或空串哨兵({empty_sentinels})，\
+             跳过 UNIQUE 约束，仅建普通索引"
+        );
+        conn.execute_batch(
+            "CREATE INDEX IF NOT EXISTS idx_cards_external_order_id ON cards(external_order_id)",
+        )?;
+    }
 
     Ok(())
 }

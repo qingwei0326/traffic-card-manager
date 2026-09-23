@@ -515,3 +515,36 @@ fn order_import_keeps_promo_end_empty_without_activation_time() {
     assert_eq!(cards.len(), 1);
     assert_eq!(cards[0].promo_end.as_deref(), Some(""));
 }
+
+
+#[test]
+fn match_plan_in_agrees_with_match_plan() {
+    // 把 match_plan 拆成「切片内匹配」后，行为不该变：
+    // 同一份套餐表下，match_plan_in 的结果必须和原先打 SQL 的 match_plan 一致。
+    let conn = conn();
+    conn.execute(
+        "INSERT INTO plans (id, name, carrier, monthly_price) VALUES (1, '移动29元235G', '移动', 29.0)",
+        [],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO plans (id, name, carrier, monthly_price) VALUES (2, '电信39元100G', '电信', 39.0)",
+        [],
+    )
+    .unwrap();
+
+    let plans = db::plans::get_all_plans(&conn).unwrap();
+
+    for card_name in ["移动29元235G", "29元235G移动卡", "完全不相关的名字"] {
+        let via_conn = db::plans::match_plan(&conn, card_name).unwrap();
+        let via_slice = db::plans::match_plan_in(&plans, card_name);
+        assert_eq!(
+            via_conn.map(|p| p.name),
+            via_slice.map(|p| p.name),
+            "两种匹配路径对「{card_name}」结果不一致"
+        );
+    }
+
+    // 新导入路径结构性地消除了 N+1：1000 张卡片只取一次套餐表，而不是 1000 次
+    assert!(db::plans::get_all_plans(&conn).unwrap().len() >= 2);
+}

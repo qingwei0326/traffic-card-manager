@@ -124,6 +124,94 @@ fn failing_migration_rolls_back_everything() {
     );
 }
 
+fn index_exists(conn: &Connection, table: &str, name: &str) -> bool {
+    conn.query_row(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND tbl_name=?1 AND name=?2",
+        rusqlite::params![table, name],
+        |row| row.get::<_, i64>(0),
+    )
+    .unwrap()
+        > 0
+}
+
+/// PRAGMA index_list 的第三列是 unique 标记
+fn index_is_unique(conn: &Connection, name: &str) -> Option<bool> {
+    let mut stmt = conn
+        .prepare("PRAGMA index_list(cards)")
+        .unwrap();
+    let rows: Vec<(String, bool)> = stmt
+        .query_map([], |row| Ok((row.get::<_, String>(1)?, row.get::<_, i64>(2)? == 1)))
+        .unwrap()
+        .map(Result::unwrap)
+        .collect();
+    rows.into_iter().find(|(n, _)| n == name).map(|(_, u)| u)
+}
+
+#[test]
+fn v2_creates_performance_indexes() {
+    let conn = conn();
+
+    assert!(index_exists(&conn, "customers", "idx_customers_name_phone"));
+    assert!(index_exists(&conn, "cards", "idx_cards_external_order_id"));
+}
+
+#[test]
+fn v2_unique_index_degrades_when_duplicates_exist() {
+    // 关键：先只建 v1 基线（此时 external_order_id 还没有任何索引），
+    // 才能往里塞脏数据；否则 conn() 默认已跑到 v2、UNIQUE 索引已存在，
+    // 插重复值会在迁移前就因约束冲突炸掉。
+    let conn = Connection::open_in_memory().unwrap();
+    db::migrations::migrate_to_baseline(&conn).unwrap();
+    // 模拟真实脏数据：两条相同的 172 订单号 + 一条空串哨兵
+    conn.execute(
+        "INSERT INTO cards (card_name, carrier, plan_type, external_order_id) VALUES ('A','移动','性价比','ORD-1')",
+        [],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO cards (card_name, carrier, plan_type, external_order_id) VALUES ('B','移动','性价比','ORD-1')",
+        [],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO cards (card_name, carrier, plan_type, external_order_id) VALUES ('C','移动','性价比','')",
+        [],
+    )
+    .unwrap();
+
+    migrate(&conn).unwrap();
+
+    // 索引建出来了，但因为有重复/空串哨兵，必须是普通索引，不能是 UNIQUE
+    assert!(index_exists(&conn, "cards", "idx_cards_external_order_id"));
+    assert_eq!(
+        index_is_unique(&conn, "idx_cards_external_order_id"),
+        Some(false),
+        "脏数据下不应是 UNIQUE，否则后续插入空串哨兵会爆"
+    );
+}
+
+#[test]
+fn v2_unique_index_applies_when_data_is_clean() {
+    // 同样先只建 v1，再塞**一条**干净的订单号，最后跑 migrate 触发 v2
+    // ——这样才能验证「v2 看到的是干净数据、主动决定上 UNIQUE」这条分支，
+    // 而不是 conn() 在空库上顺手建的 UNIQUE 索引。
+    let conn = Connection::open_in_memory().unwrap();
+    db::migrations::migrate_to_baseline(&conn).unwrap();
+    conn.execute(
+        "INSERT INTO cards (card_name, carrier, plan_type, external_order_id) VALUES ('A','移动','性价比','ORD-1')",
+        [],
+    )
+    .unwrap();
+
+    migrate(&conn).unwrap();
+
+    assert_eq!(
+        index_is_unique(&conn, "idx_cards_external_order_id"),
+        Some(true),
+        "干净数据下应给 UNIQUE，顺带兜底 external_order_id 不重复"
+    );
+}
+
 #[test]
 fn foreign_keys_are_enforced_after_migrate() {
     let conn = Connection::open_in_memory().unwrap();

@@ -54,23 +54,31 @@ pub fn get_all_plans(conn: &Connection) -> AppResult<Vec<Plan>> {
 }
 
 pub fn match_plan(conn: &Connection, card_name: &str) -> AppResult<Option<Plan>> {
-    let mut exact = conn.prepare("SELECT * FROM plans WHERE name = ? LIMIT 1")?;
-    let mut exact_rows = exact.query(params![card_name])?;
-    if let Some(row) = exact_rows.next()? {
-        return Ok(Some(map_plan(row)?));
+    Ok(match_plan_in(&get_all_plans(conn)?, card_name))
+}
+
+/// 在已取出的套餐切片里做匹配，不碰数据库。
+///
+/// 这样导入 N 张卡片时只做一次 `get_all_plans`，而不是每张卡都全表扫一遍
+/// （原实现是 O(卡片数 × 套餐数) 的隐性 N²）。精确同名匹配也在切片内完成，
+/// 所以不再需要为它单独打一条 SQL。
+pub fn match_plan_in(plans: &[Plan], card_name: &str) -> Option<Plan> {
+    if let Some(exact) = plans.iter().find(|plan| plan.name == card_name) {
+        return Some(exact.clone());
     }
 
     let clean_card = clean_plan_name(card_name);
-    let candidates = get_all_plans(conn)?
-        .into_iter()
+    let candidates = plans
+        .iter()
         .filter(|plan| {
             let clean_plan = clean_plan_name(&plan.name);
             (!clean_card.is_empty() && plan.name.contains(&clean_card))
                 || (!clean_plan.is_empty() && card_name.contains(&clean_plan))
         })
+        .cloned()
         .collect::<Vec<_>>();
 
-    Ok(pick_compatible_plan(card_name, candidates))
+    pick_compatible_plan(card_name, candidates)
 }
 
 pub fn backfill_card_plan_fields(conn: &Connection) -> AppResult<i64> {

@@ -11,6 +11,8 @@ pub fn import_from_172(conn: &Connection, rows: Vec<Value>) -> AppResult<ImportR
     let mut skipped = 0;
     // RAII 事务。事务对象借用同一个 conn，闭包里的语句自然都在事务内。
     let tx = conn.unchecked_transaction()?;
+    // 套餐表一次性取出来，循环里复用切片——否则每张卡都 get_all_plans 全表扫一遍
+    let all_plans = plans::get_all_plans(conn)?;
     let result = (|| {
         for row in &rows {
             let order_status = value_string(row, "订单状态");
@@ -21,7 +23,7 @@ pub fn import_from_172(conn: &Connection, rows: Vec<Value>) -> AppResult<ImportR
             let order_id = value_string(row, "172订单号");
             let existing = find_card_by_order(conn, &order_id)?;
             let plan_name = value_string(row, "套餐");
-            let matched_plan = plans::match_plan(conn, &plan_name)?;
+            let matched_plan = plans::match_plan_in(&all_plans, &plan_name);
             let activate_time = value_string(row, "激活时间");
             let promo_end = import_promo_end(existing.as_ref(), matched_plan.as_ref(), &activate_time);
             let address = [
@@ -142,6 +144,7 @@ pub fn import_from_haoyi(conn: &Connection, rows: Vec<Value>) -> AppResult<Impor
     let mut updated = 0;
     let mut skipped = 0;
     let tx = conn.unchecked_transaction()?;
+    let all_plans = plans::get_all_plans(conn)?;
     let result = (|| {
         for row in &rows {
             let upstream_status = value_string(row, "上游订单状态");
@@ -152,7 +155,7 @@ pub fn import_from_haoyi(conn: &Connection, rows: Vec<Value>) -> AppResult<Impor
             let order_id = value_string(row, "订单号");
             let existing = find_card_by_order(conn, &order_id)?;
             let plan_name = value_string(row, "商品名称");
-            let matched_plan = plans::match_plan(conn, &plan_name)?;
+            let matched_plan = plans::match_plan_in(&all_plans, &plan_name);
             let address = value_string(row, "收货地址").if_empty_owned(
                 [
                     value_string(row, "省"),
