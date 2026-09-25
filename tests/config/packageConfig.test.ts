@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest'
 import fs from 'node:fs'
 import path from 'node:path'
 
-const root = path.resolve(__dirname, '..')
+// 移入 tests/config/ 后，__dirname 深了一层：用 ../.. 指回项目根，
+// 否则读不到 package.json / tauri.conf.json。
+const root = path.resolve(__dirname, '..', '..')
 const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
 const tauriConfig = JSON.parse(fs.readFileSync(path.join(root, 'src-tauri/tauri.conf.json'), 'utf8'))
 const defaultCapability = JSON.parse(fs.readFileSync(path.join(root, 'src-tauri/capabilities/default.json'), 'utf8'))
@@ -10,7 +12,8 @@ const releaseWorkflow = fs.readFileSync(path.join(root, '.github/workflows/relea
 const ciWorkflow = fs.readFileSync(path.join(root, '.github/workflows/ci.yml'), 'utf8')
 const updaterEndpoint = 'https://github.com/qingwei0326/traffic-card-manager/releases/latest/download/latest.json'
 
-describe('Tauri package config', () => {
+// [config-guard] 前缀：归到配置一致性守护分组，便于按名筛选与 CI 日志区分
+describe('[config-guard] Tauri package config', () => {
   const removedRuntime = `${'elec'}${'tron'}`
   const removedBuilder = `${removedRuntime}-builder`
   const removedLog = `${removedRuntime}-log`
