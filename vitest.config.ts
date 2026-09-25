@@ -10,4 +10,18 @@ export default defineConfig({
     environment: 'node',
     include: ['tests/**/*.test.{ts,tsx}'],
   },
+  coverage: {
+    provider: 'v8',
+    reporter: ['text', 'html', 'json'],
+    // 只量 src 下的运行时代码；类型定义与测试/脚本不计入
+    include: ['src/**/*.{ts,tsx}'],
+    exclude: [
+      'src/types/**',
+      'src/main.tsx',
+      'src/lib/appApi.ts',
+      'tests/**',
+      'scripts/**',
+      'dist/**',
+    ],
+  },
 })
