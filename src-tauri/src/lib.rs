@@ -31,7 +31,7 @@ pub fn run() {
             let app_data_dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&app_data_dir)?;
 
-            let migration_error =
+            let mut migration_error =
                 if let Some(old_dir) = db::legacy::legacy_data_dir() {
                     db::legacy::copy_legacy_files(&old_dir, &app_data_dir)
                         .err()
@@ -43,7 +43,12 @@ pub fn run() {
             let db_path = app_data_dir.join("traffic-cards.db");
             let config_path = app_data_dir.join("config.json");
             let conn = rusqlite::Connection::open(&db_path)?;
-            db::migrations::migrate(&conn)?;
+            // 迁移失败不再致命：把原因存进 migration_error，由 UI 弹「起动告警」。
+            // 原来用 `?` 直接让 app 在启动瞬间崩溃，用户看不到任何原因。
+            if let Err(e) = db::migrations::migrate(&conn) {
+                eprintln!("[warn] 数据库迁移失败：{e}");
+                migration_error = Some(e.to_string());
+            }
 
             app.manage(state::AppState {
                 db: std::sync::Mutex::new(conn),
@@ -76,6 +81,7 @@ pub fn run() {
             commands::customers::customers_merge,
             commands::plans::plans_get_all,
             commands::plans::plans_import,
+            commands::system::migration_get_status,
             commands::plans::plans_import_from_file,
             commands::plans::plans_match,
             commands::plans::plans_backfill_cards,

@@ -8,6 +8,7 @@ import FinanceStats from './components/FinanceStats'
 import Settings from './components/Settings'
 import PlanList from './components/PlanList'
 import CardPicker from './components/CardPicker'
+import MigrationBanner from './components/MigrationBanner'
 import { appApi } from './lib/appApi'
 import type { Card } from './types'
 
@@ -22,6 +23,7 @@ function App() {
   const [pickerProvince, setPickerProvince] = useState('')
   const [cardInitialStatus, setCardInitialStatus] = useState<Card['status'] | ''>('')
   const [showClosePrompt, setShowClosePrompt] = useState(false)
+  const [migrationError, setMigrationError] = useState<string | null>(null)
 
   useEffect(() => {
     let dispose: (() => void) | undefined
@@ -36,6 +38,23 @@ function App() {
     return () => {
       active = false
       dispose?.()
+    }
+  }, [])
+
+  // 起动时查询迁移是否成功：失败则弹告警横幅（如 schema 升级失败、
+  // 旧版数据搬迁失败），而不是让用户面对一个静默崩溃的窗口。
+  useEffect(() => {
+    let active = true
+    appApi.migration
+      .getStatus()
+      .then(status => {
+        if (active && !status.ok) {
+          setMigrationError(status.error ?? '未知迁移错误')
+        }
+      })
+      .catch(() => {})
+    return () => {
+      active = false
     }
   }, [])
 
@@ -99,6 +118,9 @@ function App() {
 
   return (
     <Layout currentPage={currentPage} onNavigate={setCurrentPage}>
+      {migrationError && (
+        <MigrationBanner error={migrationError} onDismiss={() => setMigrationError(null)} />
+      )}
       {renderPage()}
       {showClosePrompt && (
         <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/45 px-4 backdrop-blur-sm">

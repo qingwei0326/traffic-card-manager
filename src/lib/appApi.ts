@@ -8,6 +8,7 @@ import type {
   Card,
   Customer,
   ImportResult,
+  MigrationStatus,
   PaginatedResult,
   Plan,
   PlanImportResult,
@@ -100,5 +101,8 @@ export const appApi: AppApi = {
     showWindow: () => call<void>('app_show_window'),
     chooseCloseAction: action => call<void>('app_choose_close_action', { action }),
     onCloseRequest: callback => on<null>('app:close-request', () => callback()),
+  },
+  migration: {
+    getStatus: () => call<MigrationStatus>('migration_get_status'),
   },
 }

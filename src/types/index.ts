@@ -195,6 +195,12 @@ export interface UpdateResult {
   version?: string
 }
 
+/** 迁移健康状态。`ok=false` 时 `error` 带可读原因，前端据此弹起动告警。 */
+export interface MigrationStatus {
+  ok: boolean
+  error?: string
+}
+
 export interface AppApi {
   cards: {
     getAll: (filters?: CardFilters) => Promise<PaginatedResult<Card>>
@@ -262,6 +268,10 @@ export interface AppApi {
     onProgress: (callback: (percent: number) => void) => Promise<() => void>
     onDownloaded: (callback: () => void) => Promise<() => void>
     onError: (callback: (message: string) => void) => Promise<() => void>
+  }
+  // 起动时查询迁移是否成功；失败则 UI 弹告警
+  migration: {
+    getStatus: () => Promise<MigrationStatus>
   }
   notifications: {
     checkNow: () => Promise<void>

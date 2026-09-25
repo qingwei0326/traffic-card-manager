@@ -61,6 +61,9 @@ pub fn migrate(conn: &Connection) -> AppResult<()> {
 ///
 /// 这样测试用例可以先在一份「只有 v1」的库里塞脏数据，再调 [`migrate`]
 /// 触发 v2 的降级分支，验证 `external_order_id` 重复/空串哨兵场景下不会误上 UNIQUE。
+///
+/// `#[cfg(test)]`：此函数仅被集成测试使用，正常构建不应编进来（否则会报 dead_code）。
+#[cfg(test)]
 pub fn migrate_to_baseline(conn: &Connection) -> AppResult<()> {
     conn.execute_batch("PRAGMA foreign_keys = ON;")?;
     run_pending(conn, std::slice::from_ref(&MIGRATIONS[0]))
