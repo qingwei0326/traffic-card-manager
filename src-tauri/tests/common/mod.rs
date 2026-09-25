@@ -24,6 +24,6 @@ pub mod models;
 /// 每个用例独享一个内存库，天然隔离、可重复执行。
 pub fn conn() -> Connection {
     let conn = Connection::open_in_memory().unwrap();
-    db::migrations::migrate(&conn).unwrap();
+    db::migrations::migrate(&conn, None).unwrap();
     conn
 }

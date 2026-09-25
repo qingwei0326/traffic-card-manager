@@ -11,8 +11,10 @@
 //! 3. **拒绝降级打开**。`user_version` 高于本程序已知的最高版本时直接报错，
 //!    而不是假装没事——旧程序读新库可能把不认识的列写坏。
 
+use crate::db::backup;
 use crate::error::{AppError, AppResult};
 use rusqlite::Connection;
+use std::path::Path;
 
 /// 一条迁移。
 ///
@@ -52,8 +54,20 @@ pub(crate) fn current_version(conn: &Connection) -> AppResult<u32> {
 /// 注意 `PRAGMA foreign_keys` 必须在开事务**之前**设置：
 /// SQLite 明确规定它在事务内是 no-op，挪进事务里会静默失效，
 /// 外键约束就形同虚设了。
-pub fn migrate(conn: &Connection) -> AppResult<()> {
+///
+/// `db_path` 为 `Some` 时，在动库**之前**先整库复制一份快照当退路——本项目只支持
+/// 前向迁移（无向下迁移），一旦 schema 被改就再无版本化回滚路径。快照策略与
+/// `backup.import` 完全一致（见 `backup::snapshot_db_file`）。传 `None`（内存库、
+/// 仅测试用）则跳过快照。快照仅在确有版本差（`current < latest`）时才复制，稳态零开销。
+pub fn migrate(conn: &Connection, db_path: Option<&Path>) -> AppResult<()> {
     conn.execute_batch("PRAGMA foreign_keys = ON;")?;
+
+    if current_version(conn)? < latest_version() {
+        backup::snapshot_db_file(db_path, "pre-migration").map_err(|e| {
+            AppError::Message(format!("迁移前无法创建数据库快照，已中止迁移以防数据损坏：{e}"))
+        })?;
+    }
+
     run_pending(conn, MIGRATIONS)
 }
 

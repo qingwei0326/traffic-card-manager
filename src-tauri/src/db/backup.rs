@@ -49,7 +49,7 @@ pub fn import_data(conn: &Connection, db_path: Option<&Path>, data: Value) -> Ap
     verify_checksum(&data)?;
 
     // 快照必须在开事务之前做：事务一旦开始，文件就不再处于一致状态
-    let backup_path = snapshot_db_file(db_path)?;
+    let backup_path = snapshot_db_file(db_path, "pre-import")?;
 
     let tx = conn.unchecked_transaction()?;
     tx.execute("DELETE FROM cards", [])?;
@@ -80,10 +80,13 @@ pub fn import_data(conn: &Connection, db_path: Option<&Path>, data: Value) -> Ap
     }))
 }
 
-/// 把数据库文件复制一份到 `<db 目录>/backups/pre-import-<时间戳>.db`。
+/// 把数据库文件复制一份到 `<db 目录>/backups/<prefix>-<时间戳>.db`。
 ///
-/// 复制失败就让导入失败：拿不到退路还要清全表，是不可接受的。
-fn snapshot_db_file(db_path: Option<&Path>) -> AppResult<Option<String>> {
+/// 复制失败就让调用方失败：拿不到退路还要清全表/改 schema，是不可接受的。
+///
+/// `pub(crate)`：迁移模块也复用同一套快照策略（`migrations.rs` 在跑前向迁移前先留退路），
+/// 用不同的 `prefix`（`pre-import` / `pre-migration`）区分两种快照的用途。
+pub(crate) fn snapshot_db_file(db_path: Option<&Path>, prefix: &str) -> AppResult<Option<String>> {
     let Some(db_path) = db_path else {
         return Ok(None);
     };
@@ -98,7 +101,7 @@ fn snapshot_db_file(db_path: Option<&Path>) -> AppResult<Option<String>> {
     fs::create_dir_all(&backup_dir)?;
 
     let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
-    let dest = backup_dir.join(format!("pre-import-{stamp}.db"));
+    let dest = backup_dir.join(format!("{prefix}-{stamp}.db"));
     fs::copy(db_path, &dest)?;
 
     Ok(Some(dest.to_string_lossy().to_string()))

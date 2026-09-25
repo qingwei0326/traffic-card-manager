@@ -14,7 +14,7 @@ fn initializes_fresh_database_schema() {
     let db_path = dir.path().join("traffic-cards.db");
     let conn = Connection::open(&db_path).unwrap();
 
-    db::migrations::migrate(&conn).unwrap();
+    db::migrations::migrate(&conn, None).unwrap();
 
     let count: i64 = conn
         .query_row(

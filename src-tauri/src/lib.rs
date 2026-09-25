@@ -45,7 +45,7 @@ pub fn run() {
             let conn = rusqlite::Connection::open(&db_path)?;
             // 迁移失败不再致命：把原因存进 migration_error，由 UI 弹「起动告警」。
             // 原来用 `?` 直接让 app 在启动瞬间崩溃，用户看不到任何原因。
-            if let Err(e) = db::migrations::migrate(&conn) {
+            if let Err(e) = db::migrations::migrate(&conn, Some(&db_path)) {
                 eprintln!("[warn] 数据库迁移失败：{e}");
                 migration_error = Some(e.to_string());
             }

@@ -8,7 +8,7 @@ mod common;
 pub use common::{db, error, models};
 use common::conn;
 
-use db::migrations::{current_version, latest_version, migrate, run_pending, Migration};
+use db::migrations::{current_version, latest_version, migrate, migrate_to_baseline, run_pending, Migration};
 use error::AppError;
 use rusqlite::Connection;
 
@@ -25,7 +25,7 @@ fn table_exists(conn: &Connection, name: &str) -> bool {
 #[test]
 fn fresh_database_reaches_latest_version() {
     let conn = Connection::open_in_memory().unwrap();
-    migrate(&conn).unwrap();
+    migrate(&conn, None).unwrap();
 
     assert_eq!(current_version(&conn).unwrap(), latest_version());
     assert!(table_exists(&conn, "customers"));
@@ -42,8 +42,8 @@ fn migrate_is_idempotent() {
     )
     .unwrap();
 
-    migrate(&conn).unwrap();
-    migrate(&conn).unwrap();
+    migrate(&conn, None).unwrap();
+    migrate(&conn, None).unwrap();
 
     assert_eq!(current_version(&conn).unwrap(), latest_version());
     let count: i64 = conn
@@ -63,7 +63,7 @@ fn legacy_zero_version_database_is_upgraded_in_place() {
     .unwrap();
     conn.pragma_update(None, "user_version", 0).unwrap();
 
-    migrate(&conn).unwrap();
+    migrate(&conn, None).unwrap();
 
     assert_eq!(current_version(&conn).unwrap(), latest_version());
     let name: String = conn
@@ -78,7 +78,7 @@ fn refuses_to_open_a_newer_database() {
     conn.pragma_update(None, "user_version", latest_version() + 1)
         .unwrap();
 
-    let err = migrate(&conn).unwrap_err();
+    let err = migrate(&conn, None).unwrap_err();
     assert!(
         err.to_string().contains("高于当前应用支持的最高版本"),
         "错误信息应说清是版本太新，实际是: {err}"
@@ -179,7 +179,7 @@ fn v2_unique_index_degrades_when_duplicates_exist() {
     )
     .unwrap();
 
-    migrate(&conn).unwrap();
+    migrate(&conn, None).unwrap();
 
     // 索引建出来了，但因为有重复/空串哨兵，必须是普通索引，不能是 UNIQUE
     assert!(index_exists(&conn, "cards", "idx_cards_external_order_id"));
@@ -203,7 +203,7 @@ fn v2_unique_index_applies_when_data_is_clean() {
     )
     .unwrap();
 
-    migrate(&conn).unwrap();
+    migrate(&conn, None).unwrap();
 
     assert_eq!(
         index_is_unique(&conn, "idx_cards_external_order_id"),
@@ -215,11 +215,81 @@ fn v2_unique_index_applies_when_data_is_clean() {
 #[test]
 fn foreign_keys_are_enforced_after_migrate() {
     let conn = Connection::open_in_memory().unwrap();
-    migrate(&conn).unwrap();
-
+    migrate(&conn, None).unwrap();
     let enabled: i64 = conn
         .query_row("PRAGMA foreign_keys", [], |row| row.get(0))
         .unwrap();
     // 这条最容易在重构时被误伤：把 PRAGMA foreign_keys 挪进事务里就变成 no-op
     assert_eq!(enabled, 1, "migrate 后外键约束必须处于开启状态");
 }
+
+/// 前向迁移在「确有版本差」时应先整库快照留退路（无向下迁移，这是唯一的回滚点）。
+#[test]
+fn migrate_takes_pre_migration_snapshot_when_version_gap_exists() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("traffic-cards.db");
+    let conn = Connection::open(&db_path).unwrap();
+
+    // 先只跑到 v1 基线，制造 current(1) < latest(2) 的版本差
+    db::migrations::migrate_to_baseline(&conn).unwrap();
+    assert_eq!(current_version(&conn).unwrap(), 1);
+
+    let backups_dir = dir.path().join("backups");
+    assert!(
+        !backups_dir.exists(),
+        "迁移前不应有任何快照文件"
+    );
+
+    // 带 db 路径跑完整 migrate → 应生成迁移前快照并升到 v2
+    db::migrations::migrate(&conn, Some(db_path.as_path())).unwrap();
+    assert_eq!(current_version(&conn).unwrap(), latest_version());
+
+    let snapshots: Vec<_> = std::fs::read_dir(&backups_dir)
+        .unwrap()
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| {
+            entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with("pre-migration-")
+        })
+        .collect();
+    assert_eq!(
+        snapshots.len(),
+        1,
+        "存在版本差时应生成恰好一份迁移前快照当退路"
+    );
+}
+
+/// 已经是最新版本时重复迁移不应再生成快照（稳态零开销）。
+#[test]
+fn migrate_skips_snapshot_when_already_latest() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("traffic-cards.db");
+    let conn = Connection::open(&db_path).unwrap();
+
+    // 第一次 migrate：从 v0 升到 v2，应当生成一份快照
+    db::migrations::migrate(&conn, Some(db_path.as_path())).unwrap();
+    assert_eq!(current_version(&conn).unwrap(), latest_version());
+
+    // 第二次 migrate：已是最新版本，不应再生成新快照
+    db::migrations::migrate(&conn, Some(db_path.as_path())).unwrap();
+
+    let backups_dir = dir.path().join("backups");
+    let snapshots: Vec<_> = std::fs::read_dir(&backups_dir)
+        .unwrap()
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| {
+            entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with("pre-migration-")
+        })
+        .collect();
+    assert_eq!(
+        snapshots.len(),
+        1,
+        "已是最新版本时重复迁移不应再生成迁移前快照"
+    );
+}
+

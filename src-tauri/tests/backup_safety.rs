@@ -154,7 +154,7 @@ fn import_snapshots_the_database_file_before_overwriting() {
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("traffic-cards.db");
     let target = Connection::open(&db_path).unwrap();
-    db::migrations::migrate(&target).unwrap();
+    db::migrations::migrate(&target, None).unwrap();
     target
         .execute("INSERT INTO customers (id, name) VALUES (1, '导入前的客户')", [])
         .unwrap();
