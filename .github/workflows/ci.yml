@@ -40,6 +40,9 @@ jobs:
       - name: Run typecheck
         run: npm run typecheck
 
+      - name: Check frontend/backend contract consistency
+        run: npm run contract:check
+
   rust:
     name: Rust tests
     # 只跑 Windows：tauri.conf.json 的 bundle targets 只有 NSIS，Linux 不产出任何制品。
