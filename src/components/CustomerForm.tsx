@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Customer } from '../types'
 import { appApi } from '../lib/appApi'
+import { PRESET_TAGS } from '../lib/constants'
 
 interface CustomerFormProps {
   customer: Customer | null
@@ -32,8 +33,6 @@ function validateForm(form: typeof defaultForm): FormErrors {
 
   return errors
 }
-
-const PRESET_TAGS = ['价格敏感', '大流量', '长期用户', '已流失', '高价值', '新客户', '复购客户', '犹豫中']
 
 export default function CustomerForm({ customer, onSave, onCancel }: CustomerFormProps) {
   const [form, setForm] = useState(defaultForm)

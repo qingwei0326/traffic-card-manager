@@ -1,4 +1,5 @@
 use crate::error::{AppError, AppResult};
+use crate::db::EmptyDefault;
 use crate::models::{Plan, PlanImportResult};
 use rusqlite::{params, Connection, Row};
 use serde_json::Value;
@@ -610,18 +611,4 @@ fn parse_first_number(text: &str) -> Option<f64> {
         }
     }
     number.parse::<f64>().ok()
-}
-
-trait EmptyDefault {
-    fn if_empty(self, default: &str) -> String;
-}
-
-impl EmptyDefault for String {
-    fn if_empty(self, default: &str) -> String {
-        if self.is_empty() {
-            default.to_string()
-        } else {
-            self
-        }
-    }
 }

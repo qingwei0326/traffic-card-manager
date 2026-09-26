@@ -1,4 +1,4 @@
-use crate::db::{cards, customers, plans};
+use crate::db::{cards, customers, plans, EmptyDefault, IMPORT_PROFIT_RATE};
 use crate::error::AppResult;
 use crate::models::{Card, CardInput, CustomerInput, ImportResult, Plan};
 use chrono::Datelike;
@@ -45,7 +45,7 @@ pub fn import_from_172(conn: &Connection, rows: Vec<Value>) -> AppResult<ImportR
                 &value_string(row, "身份证号"),
             )?;
             let amount = parse_amount(&value_string(row, "金额"));
-            let profit = round2(amount * 0.94);
+            let profit = round2(amount * IMPORT_PROFIT_RATE);
             let status = if order_status == "已结算" {
                 if value_string(row, "激活状态") == "已激活" {
                     "使用中"
@@ -179,7 +179,7 @@ pub fn import_from_haoyi(conn: &Connection, rows: Vec<Value>) -> AppResult<Impor
                 &value_string(row, "身份证号码"),
             )?;
             let amount = parse_amount(&value_string(row, "订单金额"));
-            let profit = round2(amount * 0.94);
+            let profit = round2(amount * IMPORT_PROFIT_RATE);
             let activate_time = excel_date_to_string(&value_string(row, "入网时间"));
             let promo_end = import_promo_end(existing.as_ref(), matched_plan.as_ref(), &activate_time);
             let apply_time = excel_date_to_string(&value_string(row, "下单时间"));
@@ -518,28 +518,5 @@ fn extract_region(address: &str) -> Option<String> {
         None
     } else {
         Some(address.chars().take(6).collect())
-    }
-}
-
-trait EmptyDefault {
-    fn if_empty(self, default: &str) -> String;
-    fn if_empty_owned(self, default: String) -> String;
-}
-
-impl EmptyDefault for String {
-    fn if_empty(self, default: &str) -> String {
-        if self.is_empty() {
-            default.to_string()
-        } else {
-            self
-        }
-    }
-
-    fn if_empty_owned(self, default: String) -> String {
-        if self.is_empty() {
-            default
-        } else {
-            self
-        }
     }
 }

@@ -3,6 +3,7 @@ import { Customer, Card, CustomerFilters } from '../types'
 import CustomerForm from './CustomerForm'
 import { ConfirmModal, AlertModal } from './Modal'
 import { appApi } from '../lib/appApi'
+import { PRESET_TAGS, PROVINCES } from '../lib/constants'
 
 interface CustomerListProps {
   onRefresh: () => void
@@ -16,8 +17,7 @@ interface CustomerListProps {
 // 从地址中提取省份
 function extractProvince(address: string): string {
   if (!address) return ''
-  const provinces = ['北京','上海','天津','重庆','河北','山西','辽宁','吉林','黑龙江','江苏','浙江','安徽','福建','江西','山东','河南','湖北','湖南','广东','广西','海南','四川','贵州','云南','西藏','陕西','甘肃','青海','宁夏','新疆','内蒙古']
-  for (const p of provinces) {
+  for (const p of PROVINCES) {
     if (address.includes(p)) return p
   }
   return ''
@@ -43,8 +43,7 @@ export default function CustomerList({ onRefresh, openForm, onFormOpened, select
   const [mergeSelections, setMergeSelections] = useState<Record<number, number>>({})
   const [merging, setMerging] = useState(false)
 
-  // 预设标签
-  const PRESET_TAGS = ['价格敏感', '大流量', '长期用户', '已流失', '高价值', '新客户', '复购客户', '犹豫中']
+  // 预设标签（来自 src/lib/constants）
   const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const handleSearchChange = (value: string) => {

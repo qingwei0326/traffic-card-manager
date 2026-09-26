@@ -1,4 +1,4 @@
-use crate::db::{cards, customers, migrations, plans};
+use crate::db::{cards, customers, migrations, plans, EmptyDefault};
 use crate::error::{AppError, AppResult};
 use rusqlite::Connection;
 use serde_json::{json, Value};
@@ -291,16 +291,3 @@ fn value_f64(value: &Value, key: &str) -> f64 {
     }
 }
 
-trait EmptyDefault {
-    fn if_empty(self, default: &str) -> String;
-}
-
-impl EmptyDefault for String {
-    fn if_empty(self, default: &str) -> String {
-        if self.is_empty() {
-            default.to_string()
-        } else {
-            self
-        }
-    }
-}
