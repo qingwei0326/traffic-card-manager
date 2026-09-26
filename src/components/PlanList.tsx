@@ -36,8 +36,8 @@ export default function PlanList() {
     const input = document.createElement('input')
     input.type = 'file'
     input.accept = '.json'
-    input.onchange = async (e: any) => {
-      const file = e.target.files[0]
+    input.onchange = async (e: Event) => {
+      const file = (e.target as HTMLInputElement).files?.[0]
       if (!file) return
 
       setImporting(true)
@@ -47,8 +47,8 @@ export default function PlanList() {
         const result = await appApi.plans.import(data)
         setNotice(`导入完成：新增 ${result.imported} 个，更新 ${result.updated} 个，回填历史卡片 ${result.backfilled} 张（共 ${result.total} 个）`)
         loadPlans()
-      } catch (err: any) {
-        alert('导入失败：' + err.message)
+      } catch (err) {
+        alert('导入失败：' + (err instanceof Error ? err.message : String(err)))
       }
       setImporting(false)
     }
@@ -60,8 +60,8 @@ export default function PlanList() {
     try {
       const result = await appApi.plans.backfillCards()
       setNotice(`回填完成：补齐历史卡片 ${result.backfilled} 张`)
-    } catch (err: any) {
-      alert('回填失败：' + err.message)
+    } catch (err) {
+      alert('回填失败：' + (err instanceof Error ? err.message : String(err)))
     } finally {
       setBackfilling(false)
     }

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, type DragEvent } from 'react'
 import { ImportResult, PlanImportResult, Api172ConfigStatus, Api172SecretSource } from '../types'
 import { appApi } from '../lib/appApi'
 // 用本地时区取当天日期，避免 toISOString() 的 UTC 偏移导致凌晨少一天
@@ -15,6 +15,22 @@ const SOURCE_TEXT: Record<Api172SecretSource, string> = {
   memory: '仅内存保存',
   plaintext: '明文保存',
   none: '未配置',
+}
+
+interface OrderQueryResult {
+  code: number
+  data?: unknown
+  message?: string
+}
+
+type ImportSource = '172' | 'haoyi'
+
+// 模块级纯函数：把 Excel 文件解析为键值对数组（动态加载 xlsx，避免打进主包）
+const parseXlsxRows = async (file: File): Promise<Record<string, unknown>[]> => {
+  const XLSX = await import('xlsx')
+  const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' })
+  const sheet = wb.Sheets[wb.SheetNames[0]]
+  return XLSX.utils.sheet_to_json(sheet) as Record<string, unknown>[]
 }
 
 export default function Settings({ onRefresh }: SettingsProps) {
@@ -35,7 +51,7 @@ export default function Settings({ onRefresh }: SettingsProps) {
   const [syncResult, setSyncResult] = useState<PlanImportResult | null>(null)
   const [queryingOrder, setQueryingOrder] = useState(false)
   const [orderQueryId, setOrderQueryId] = useState('')
-  const [orderQueryResult, setOrderQueryResult] = useState<any>(null)
+  const [orderQueryResult, setOrderQueryResult] = useState<OrderQueryResult | null>(null)
   const [importResult, setImportResult] = useState<{
     title: string
     result: ImportResult
@@ -46,9 +62,9 @@ export default function Settings({ onRefresh }: SettingsProps) {
   // 导入预览状态
   const [previewOpen, setPreviewOpen] = useState(false)
   const [previewTitle, setPreviewTitle] = useState('')
-  const [previewRows, setPreviewRows] = useState<any[]>([])
+  const [previewRows, setPreviewRows] = useState<Record<string, unknown>[]>([])
   const [previewHeaders, setPreviewHeaders] = useState<string[]>([])
-  const [previewImportFn, setPreviewImportFn] = useState<((rows: any[]) => Promise<any>) | null>(null)
+  const [previewImportFn, setPreviewImportFn] = useState<((rows: Record<string, unknown>[]) => Promise<ImportResult>) | null>(null)
   const [previewSkippedReason, setPreviewSkippedReason] = useState('')
   const [previewLoading, setPreviewLoading] = useState(false)
 
@@ -72,8 +88,8 @@ export default function Settings({ onRefresh }: SettingsProps) {
       setApiSecret('')
       setApiConfigSaved(true)
       setTimeout(() => setApiConfigSaved(false), 2000)
-    } catch (error: any) {
-      alert(`保存失败：${error?.message ?? error}`)
+    } catch (error) {
+      alert(`保存失败：${error instanceof Error ? error.message : String(error)}`)
     }
   }
 
@@ -83,8 +99,8 @@ export default function Settings({ onRefresh }: SettingsProps) {
     try {
       const result = await appApi.api172.testConnection(apiUserId)
       setApiTestResult(result)
-    } catch (error: any) {
-      setApiTestResult({ success: false, message: `测试失败: ${error.message}` })
+    } catch (error) {
+      setApiTestResult({ success: false, message: `测试失败: ${error instanceof Error ? error.message : String(error)}` })
     } finally {
       setTestingApi(false)
     }
@@ -97,8 +113,8 @@ export default function Settings({ onRefresh }: SettingsProps) {
       const result = await appApi.api172.syncProducts(apiUserId)
       setSyncResult(result)
       onRefresh()
-    } catch (error: any) {
-      alert('同步失败: ' + error.message)
+    } catch (error) {
+      alert('同步失败: ' + (error instanceof Error ? error.message : String(error)))
     } finally {
       setSyncingProducts(false)
     }
@@ -111,8 +127,8 @@ export default function Settings({ onRefresh }: SettingsProps) {
     try {
       const result = await appApi.api172.getOrderInfo(apiUserId, orderQueryId.trim())
       setOrderQueryResult(result)
-    } catch (error: any) {
-      setOrderQueryResult({ code: -1, message: '查询失败: ' + error.message })
+    } catch (error) {
+      setOrderQueryResult({ code: -1, message: '查询失败: ' + (error instanceof Error ? error.message : String(error)) })
     } finally {
       setQueryingOrder(false)
     }
@@ -186,94 +202,81 @@ export default function Settings({ onRefresh }: SettingsProps) {
     input.click()
   }
 
-  const handleImport172 = async () => {
+  // 根据 source 打开导入预览（共享逻辑：文件解析已在外部完成）
+  const openPlanPreview = (rows: Record<string, unknown>[], source: ImportSource) => {
+    const preset = {
+      '172': { label: '172号卡订单', skip: '已撤单或审核不通过', done: '172号卡订单导入完成', import: appApi.import172.import },
+      'haoyi': { label: '号易订单', skip: '开卡失败或已取消', done: '号易订单导入完成', import: appApi.importHaoyi.import },
+    }[source]
+    setPreviewRows(rows)
+    setPreviewHeaders(Object.keys(rows[0] ?? {}))
+    setPreviewTitle(`${preset.label} — 共 ${rows.length} 条`)
+    setPreviewSkippedReason(preset.skip)
+    setPreviewImportFn(() => async (r: Record<string, unknown>[]) => {
+      const result = await preset.import(r)
+      setImportResult({ title: preset.done, result, skippedReason: preset.skip })
+      onRefresh()
+      return result
+    })
+    setPreviewOpen(true)
+  }
+
+  // 文件选择导入入口（原 handleImport172 / handleImportHaoyi）
+  const handlePlanImport = (source: ImportSource) => () => {
     const input = document.createElement('input')
     input.type = 'file'
     input.accept = '.xlsx,.xls'
-    input.onchange = async (e) => {
+    input.onchange = async (e: Event) => {
       const file = (e.target as HTMLInputElement).files?.[0]
       if (!file) return
 
-      setImporting172(true)
+      const setImporting = source === '172' ? setImporting172 : setImportingHaoyi
+      setImporting(true)
       try {
-        const XLSX = await import('xlsx')
-        const arrayBuffer = await file.arrayBuffer()
-        const workbook = XLSX.read(arrayBuffer, { type: 'array' })
-        const sheetName = workbook.SheetNames[0]
-        const sheet = workbook.Sheets[sheetName]
-        const rows = XLSX.utils.sheet_to_json(sheet) as any[]
-
+        const rows = await parseXlsxRows(file)
         if (rows.length === 0) {
           alert('文件中没有数据')
           return
         }
-
-        // 显示预览
-        const headers = rows.length > 0 ? Object.keys(rows[0]) : []
-        setPreviewRows(rows)
-        setPreviewHeaders(headers)
-        setPreviewTitle(`172号卡订单 — 共 ${rows.length} 条`)
-        setPreviewSkippedReason('已撤单或审核不通过')
-        setPreviewImportFn(() => async (r: any[]) => {
-          const result = await appApi.import172.import(r)
-          setImportResult({ title: '172号卡订单导入完成', result, skippedReason: '已撤单或审核不通过' })
-          onRefresh()
-          return result
-        })
-        setPreviewOpen(true)
+        openPlanPreview(rows, source)
       } catch (error) {
         console.error('导入失败:', error)
         alert('导入失败，请检查文件格式是否正确')
       } finally {
-        setImporting172(false)
+        setImporting(false)
       }
     }
     input.click()
   }
 
-  const handleImportHaoyi = async () => {
-    const input = document.createElement('input')
-    input.type = 'file'
-    input.accept = '.xlsx,.xls'
-    input.onchange = async (e) => {
-      const file = (e.target as HTMLInputElement).files?.[0]
-      if (!file) return
-
-      setImportingHaoyi(true)
-      try {
-        const XLSX = await import('xlsx')
-        const arrayBuffer = await file.arrayBuffer()
-        const workbook = XLSX.read(arrayBuffer, { type: 'array' })
-        const sheetName = workbook.SheetNames[0]
-        const sheet = workbook.Sheets[sheetName]
-        const rows = XLSX.utils.sheet_to_json(sheet) as any[]
-
-        if (rows.length === 0) {
-          alert('文件中没有数据')
-          return
-        }
-
-        const headers = rows.length > 0 ? Object.keys(rows[0]) : []
-        setPreviewRows(rows)
-        setPreviewHeaders(headers)
-        setPreviewTitle(`号易订单 — 共 ${rows.length} 条`)
-        setPreviewSkippedReason('开卡失败或已取消')
-        setPreviewImportFn(() => async (r: any[]) => {
-          const result = await appApi.importHaoyi.import(r)
-          setImportResult({ title: '号易订单导入完成', result, skippedReason: '开卡失败或已取消' })
-          onRefresh()
-          return result
-        })
-        setPreviewOpen(true)
-      } catch (error) {
-        console.error('导入失败:', error)
-        alert('导入失败，请检查文件格式是否正确')
-      } finally {
-        setImportingHaoyi(false)
-      }
+  // 拖拽导入入口（原两个内联 onDrop）
+  const handlePlanDrop = (source: ImportSource) => async (e: DragEvent) => {
+    e.preventDefault()
+    e.currentTarget.classList.remove('border-blue-400', 'bg-blue-50')
+    const file = e.dataTransfer.files[0]
+    if (!file) return
+    if (!file.name.endsWith('.xlsx') && !file.name.endsWith('.xls')) {
+      alert('请拖入 Excel 文件（.xlsx/.xls）')
+      return
     }
-    input.click()
+    const setImporting = source === '172' ? setImporting172 : setImportingHaoyi
+    setImporting(true)
+    try {
+      const rows = await parseXlsxRows(file)
+      if (rows.length === 0) {
+        alert('文件中没有数据')
+        return
+      }
+      openPlanPreview(rows, source)
+    } catch {
+      alert('文件解析失败')
+    } finally {
+      setImporting(false)
+    }
   }
+
+  const handleImport172 = handlePlanImport('172')
+  const handleImportHaoyi = handlePlanImport('haoyi')
 
   return (
     <div className="space-y-6">
@@ -348,7 +351,7 @@ export default function Settings({ onRefresh }: SettingsProps) {
                     setApiStatus(status)
                     setApiSecret('')
                   })
-                  .catch((error: any) => alert(`清除失败：${error?.message ?? error}`))
+                  .catch((error) => alert(`清除失败：${error instanceof Error ? error.message : String(error)}`))
               }}
               data-testid="api-secret-clear"
               className="btn btn-secondary"
@@ -444,35 +447,7 @@ export default function Settings({ onRefresh }: SettingsProps) {
         <div
           onDragOver={e => { e.preventDefault(); e.currentTarget.classList.add('border-blue-400', 'bg-blue-50') }}
           onDragLeave={e => { e.currentTarget.classList.remove('border-blue-400', 'bg-blue-50') }}
-          onDrop={async e => {
-            e.preventDefault()
-            e.currentTarget.classList.remove('border-blue-400', 'bg-blue-50')
-            const file = e.dataTransfer.files[0]
-            if (!file) return
-            if (!file.name.endsWith('.xlsx') && !file.name.endsWith('.xls')) {
-              alert('请拖入 Excel 文件（.xlsx/.xls）')
-              return
-            }
-            // 模拟文件选择
-            setImporting172(true)
-            try {
-              const XLSX = await import('xlsx')
-              const arrayBuffer = await file.arrayBuffer()
-              const workbook = XLSX.read(arrayBuffer, { type: 'array' })
-              const rows = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]]) as any[]
-              if (rows.length === 0) { alert('文件中没有数据'); return }
-              const headers = Object.keys(rows[0])
-              setPreviewRows(rows); setPreviewHeaders(headers)
-              setPreviewTitle(`172号卡订单 — 共 ${rows.length} 条`)
-              setPreviewSkippedReason('已撤单或审核不通过')
-              setPreviewImportFn(() => async (r: any[]) => {
-                const result = await appApi.import172.import(r)
-                setImportResult({ title: '172号卡订单导入完成', result, skippedReason: '已撤单或审核不通过' })
-                onRefresh(); return result
-              })
-              setPreviewOpen(true)
-            } catch { alert('文件解析失败') } finally { setImporting172(false) }
-          }}
+          onDrop={handlePlanDrop('172')}
           className="border-2 border-dashed border-gray-300 rounded-lg p-4 text-center text-sm text-gray-500 mb-4 transition-colors cursor-pointer"
         >
           📎 或拖拽 Excel 文件到此处
@@ -538,34 +513,7 @@ export default function Settings({ onRefresh }: SettingsProps) {
         <div
           onDragOver={e => { e.preventDefault(); e.currentTarget.classList.add('border-blue-400', 'bg-blue-50') }}
           onDragLeave={e => { e.currentTarget.classList.remove('border-blue-400', 'bg-blue-50') }}
-          onDrop={async e => {
-            e.preventDefault()
-            e.currentTarget.classList.remove('border-blue-400', 'bg-blue-50')
-            const file = e.dataTransfer.files[0]
-            if (!file) return
-            if (!file.name.endsWith('.xlsx') && !file.name.endsWith('.xls')) {
-              alert('请拖入 Excel 文件（.xlsx/.xls）')
-              return
-            }
-            setImportingHaoyi(true)
-            try {
-              const XLSX = await import('xlsx')
-              const arrayBuffer = await file.arrayBuffer()
-              const workbook = XLSX.read(arrayBuffer, { type: 'array' })
-              const rows = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]]) as any[]
-              if (rows.length === 0) { alert('文件中没有数据'); return }
-              const headers = Object.keys(rows[0])
-              setPreviewRows(rows); setPreviewHeaders(headers)
-              setPreviewTitle(`号易订单 — 共 ${rows.length} 条`)
-              setPreviewSkippedReason('开卡失败或已取消')
-              setPreviewImportFn(() => async (r: any[]) => {
-                const result = await appApi.importHaoyi.import(r)
-                setImportResult({ title: '号易订单导入完成', result, skippedReason: '开卡失败或已取消' })
-                onRefresh(); return result
-              })
-              setPreviewOpen(true)
-            } catch { alert('文件解析失败') } finally { setImportingHaoyi(false) }
-          }}
+          onDrop={handlePlanDrop('haoyi')}
           className="border-2 border-dashed border-gray-300 rounded-lg p-4 text-center text-sm text-gray-500 mb-4 transition-colors cursor-pointer"
         >
           📎 或拖拽 Excel 文件到此处
@@ -626,8 +574,8 @@ export default function Settings({ onRefresh }: SettingsProps) {
                 const result = await appApi.plans.importFromFile('172-plans.json')
                 setPlanImportResult(`172号卡平台：新增 ${result.imported} 条，更新 ${result.updated} 条，回填老卡 ${result.backfilled} 张（共 ${result.total} 条）`)
                 onRefresh()
-              } catch (e: any) {
-                setPlanImportResult('导入失败: ' + e.message)
+              } catch (e) {
+                setPlanImportResult('导入失败: ' + (e instanceof Error ? e.message : String(e)))
               } finally {
                 setImportingPlans(false)
               }
@@ -646,8 +594,8 @@ export default function Settings({ onRefresh }: SettingsProps) {
                 const result = await appApi.plans.importFromFile('haoyi-plans-parsed.json')
                 setPlanImportResult(`号易平台：新增 ${result.imported} 条，更新 ${result.updated} 条，回填老卡 ${result.backfilled} 张（共 ${result.total} 条）`)
                 onRefresh()
-              } catch (e: any) {
-                setPlanImportResult('导入失败: ' + e.message)
+              } catch (e) {
+                setPlanImportResult('导入失败: ' + (e instanceof Error ? e.message : String(e)))
               } finally {
                 setImportingPlans(false)
               }

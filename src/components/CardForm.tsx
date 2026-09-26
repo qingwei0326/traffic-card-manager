@@ -146,17 +146,18 @@ export default function CardForm({ card, onSave, onCancel }: CardFormProps) {
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
   }
 
-  const handleChange = (field: string, value: any) => {
+  type CardFormState = typeof defaultForm
+  const handleChange = <K extends keyof CardFormState>(field: K, value: CardFormState[K]) => {
     setForm(prev => {
-      const next = { ...prev, [field]: value }
+      const next = { ...prev, [field]: value } as CardFormState
       // 激活时间变更时同步优惠开始时间
       if (field === 'activate_time') {
-        next.promo_start = value
+        next.promo_start = next.activate_time
       }
       // 激活时间或优惠月数变更时自动计算到期日（仅在优惠月数 > 0 时）
       if (field === 'activate_time' || field === 'promo_months') {
-        const at = field === 'activate_time' ? value : prev.activate_time
-        const pm = field === 'promo_months' ? value : prev.promo_months
+        const at = field === 'activate_time' ? next.activate_time : prev.activate_time
+        const pm = field === 'promo_months' ? next.promo_months : prev.promo_months
         if (pm > 0) {
           next.promo_end = calcPromoEnd(at, pm)
         }
@@ -450,7 +451,7 @@ export default function CardForm({ card, onSave, onCancel }: CardFormProps) {
               <label className="block text-sm font-medium text-gray-700 mb-1">状态</label>
               <select
                 value={form.status}
-                onChange={e => handleChange('status', e.target.value)}
+                onChange={e => handleChange('status', e.target.value as Card['status'])}
                 className="select"
               >
                 <option value="使用中">使用中</option>
