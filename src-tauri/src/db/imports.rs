@@ -5,47 +5,61 @@ use chrono::Datelike;
 use rusqlite::{params, Connection};
 use serde_json::Value;
 
+/// 导入来源平台。两个公开导入函数退化为薄包装，共用 `import_rows` 的公共流程。
+#[derive(Clone, Copy)]
+pub enum ImportSource {
+    Num172,
+    Haoyi,
+}
+
+/// `adapt_row` 产出的、与来源无关的归一化行。
+/// 所有平台差异（字段名、状态映射、日期解析、来源标签等）都在 `adapt_row` 内 1:1 平移，
+/// 因此 `import_rows` 可以完全来源无关地构造 `CardInput` 与写入。
+pub struct NormalizedRow {
+    pub order_id: String,
+    pub plan_name: String,
+    pub address: String,
+    pub raw_phone: String,
+    pub name: String,
+    pub id_card: String,
+    pub amount_str: String,
+    pub activate_time: String,
+    pub apply_time: String,
+    pub status: String,
+    pub notes: String,
+    pub source: String,
+    pub express_company: String,
+    pub express_number: String,
+    pub first_charge_str: String,
+    pub carrier_hint: Option<String>,
+    pub region: Option<String>,
+}
+
+/// 单行适配结果：要么整行跳过（上游已撤单/失败），要么给出归一化行。
+pub enum AdaptOutcome {
+    Skip,
+    Row(NormalizedRow),
+}
+
 pub fn import_from_172(conn: &Connection, rows: Vec<Value>) -> AppResult<ImportResult> {
-    let mut imported = 0;
-    let mut updated = 0;
-    let mut skipped = 0;
-    // RAII 事务。事务对象借用同一个 conn，闭包里的语句自然都在事务内。
-    let tx = conn.unchecked_transaction()?;
-    // 套餐表一次性取出来，循环里复用切片——否则每张卡都 get_all_plans 全表扫一遍
-    let all_plans = plans::get_all_plans(conn)?;
-    let result = (|| {
-        for row in &rows {
+    import_rows(conn, rows, ImportSource::Num172)
+}
+
+pub fn import_from_haoyi(conn: &Connection, rows: Vec<Value>) -> AppResult<ImportResult> {
+    import_rows(conn, rows, ImportSource::Haoyi)
+}
+
+/// 按来源把一行平台 JSON 适配成 `NormalizedRow`，或标记为 `Skip`。
+/// 这里逐字段 1:1 平移两个旧实现（import_from_172 / import_from_haoyi）的平台差异，
+/// 不做任何"顺手优化"——号易的状态映射、Excel 日期转换、手机脱敏都保持原样。
+fn adapt_row(row: &Value, source: ImportSource) -> AppResult<AdaptOutcome> {
+    match source {
+        ImportSource::Num172 => {
             let order_status = value_string(row, "订单状态");
             if order_status == "已撤单" || order_status == "审核不通过" {
-                skipped += 1;
-                continue;
+                return Ok(AdaptOutcome::Skip);
             }
-            let order_id = value_string(row, "172订单号");
-            let existing = find_card_by_order(conn, &order_id)?;
             let plan_name = value_string(row, "套餐");
-            let matched_plan = plans::match_plan_in(&all_plans, &plan_name);
-            let activate_time = value_string(row, "激活时间");
-            let promo_end = import_promo_end(existing.as_ref(), matched_plan.as_ref(), &activate_time);
-            let address = [
-                value_string(row, "省份"),
-                value_string(row, "城市"),
-                value_string(row, "县区"),
-                value_string(row, "详细地址"),
-            ]
-            .into_iter()
-            .filter(|item| !item.is_empty())
-            .collect::<Vec<_>>()
-            .join("");
-            let raw_phone = first_non_empty(&[value_string(row, "按号码发货"), value_string(row, "生产号码")]);
-            let customer_id = find_or_create_customer(
-                conn,
-                &value_string(row, "姓名"),
-                &raw_phone,
-                &address,
-                &value_string(row, "身份证号"),
-            )?;
-            let amount = parse_amount(&value_string(row, "金额"));
-            let profit = round2(amount * IMPORT_PROFIT_RATE);
             let status = if order_status == "已结算" {
                 if value_string(row, "激活状态") == "已激活" {
                     "使用中"
@@ -58,104 +72,53 @@ pub fn import_from_172(conn: &Connection, rows: Vec<Value>) -> AppResult<ImportR
                 "待确认"
             }
             .to_string();
-
-            let input = build_import_card(
-                existing.as_ref(),
-                matched_plan.as_ref(),
-                CardInput {
-                    card_name: Some(plan_name.clone()),
-                    carrier: Some(
-                        matched_plan
-                            .as_ref()
-                            .and_then(|plan| plan.carrier.clone())
-                            .unwrap_or_else(|| plans::parse_carrier(&plan_name)),
-                    ),
-                    plan_type: Some(plans::parse_plan_type(&plan_name)),
-                    monthly_price: Some(
-                        matched_plan
-                            .as_ref()
-                            .map(|plan| plan.monthly_price)
-                            .unwrap_or_else(|| plans::parse_monthly_price(&plan_name)),
-                    ),
-                    data_amount: Some(
-                        matched_plan
-                            .as_ref()
-                            .map(|plan| plan.data_amount.to_string())
-                            .unwrap_or_else(|| plans::parse_data_amount(&plan_name)),
-                    ),
-                    region: Some(
-                        format_region(&value_string(row, "省份"), &value_string(row, "城市"))
-                            .or_else(|| matched_plan.as_ref().and_then(|plan| plan.region.clone()))
-                            .unwrap_or_default(),
-                    ),
-                    contract_period: Some(
-                        matched_plan
-                            .as_ref()
-                            .map(|plan| plan.contract_period)
-                            .unwrap_or(0),
-                    ),
-                    renewal_reminder_days: Some(30),
-                    apply_time: Some(value_string(row, "下单时间")),
-                    activate_time: Some(activate_time.clone()),
-                    promo_start: Some(activate_time.clone()),
-                    promo_end,
-                    phone_number: Some(raw_phone),
-                    customer_id,
-                    profit: Some(profit),
-                    status: Some(merge_imported_status(
-                        existing.as_ref().map(|card| card.status.as_str()),
-                        &status,
-                    )),
-                    notes: Some(first_non_empty(&[
-                        value_string(row, "生产失败原因"),
-                        existing.as_ref().and_then(|card| card.notes.clone()).unwrap_or_default(),
-                    ])),
-                    external_order_id: Some(order_id),
-                    id_card: optional_non_empty(value_string(row, "身份证号")),
-                    address: optional_non_empty(address),
-                    express_company: optional_non_empty(value_string(row, "物流公司")),
-                    express_number: optional_non_empty(value_string(row, "运单号")),
-                    first_charge_amount: Some(parse_amount(&value_string(row, "首充金额"))),
-                    source: Some(value_string(row, "订单来源").if_empty("172号卡平台")),
-                },
-            );
-
-            if let Some(existing) = existing {
-                cards::update_card(conn, existing.id, input)?;
-                updated += 1;
-            } else {
-                cards::create_card(conn, input)?;
-                imported += 1;
-            }
+            let address = [
+                value_string(row, "省份"),
+                value_string(row, "城市"),
+                value_string(row, "县区"),
+                value_string(row, "详细地址"),
+            ]
+            .into_iter()
+            .filter(|item| !item.is_empty())
+            .collect::<Vec<_>>()
+            .join("");
+            let raw_phone =
+                first_non_empty(&[value_string(row, "按号码发货"), value_string(row, "生产号码")]);
+            let region = format_region(&value_string(row, "省份"), &value_string(row, "城市"));
+            Ok(AdaptOutcome::Row(NormalizedRow {
+                order_id: value_string(row, "172订单号"),
+                plan_name: plan_name.clone(),
+                address,
+                raw_phone,
+                name: value_string(row, "姓名"),
+                id_card: value_string(row, "身份证号"),
+                amount_str: value_string(row, "金额"),
+                activate_time: value_string(row, "激活时间"),
+                apply_time: value_string(row, "下单时间"),
+                status,
+                notes: first_non_empty(&[value_string(row, "生产失败原因")]),
+                source: value_string(row, "订单来源").if_empty("172号卡平台"),
+                express_company: value_string(row, "物流公司"),
+                express_number: value_string(row, "运单号"),
+                first_charge_str: value_string(row, "首充金额"),
+                carrier_hint: Some(plans::parse_carrier(&plan_name)),
+                region,
+            }))
         }
-        Ok::<_, crate::error::AppError>(())
-    })();
-    finish_import(tx, result)?;
-    Ok(ImportResult {
-        imported,
-        updated,
-        skipped,
-        total: rows.len() as i64,
-    })
-}
-
-pub fn import_from_haoyi(conn: &Connection, rows: Vec<Value>) -> AppResult<ImportResult> {
-    let mut imported = 0;
-    let mut updated = 0;
-    let mut skipped = 0;
-    let tx = conn.unchecked_transaction()?;
-    let all_plans = plans::get_all_plans(conn)?;
-    let result = (|| {
-        for row in &rows {
+        ImportSource::Haoyi => {
             let upstream_status = value_string(row, "上游订单状态");
             if upstream_status == "开卡失败" || upstream_status == "已取消" {
-                skipped += 1;
-                continue;
+                return Ok(AdaptOutcome::Skip);
             }
-            let order_id = value_string(row, "订单号");
-            let existing = find_card_by_order(conn, &order_id)?;
             let plan_name = value_string(row, "商品名称");
-            let matched_plan = plans::match_plan_in(&all_plans, &plan_name);
+            let status = if upstream_status == "已激活" || upstream_status == "已开卡" {
+                "使用中"
+            } else if upstream_status.contains("失败") || upstream_status == "已取消" {
+                "已到期"
+            } else {
+                "待确认"
+            }
+            .to_string();
             let address = value_string(row, "收货地址").if_empty_owned(
                 [
                     value_string(row, "省"),
@@ -168,60 +131,105 @@ pub fn import_from_haoyi(conn: &Connection, rows: Vec<Value>) -> AppResult<Impor
                 .collect::<Vec<_>>()
                 .join(""),
             );
-            let raw_phone = first_non_empty(&[value_string(row, "生产号码"), value_string(row, "手机号")])
-                .trim_start_matches('\'')
-                .to_string();
+            let raw_phone = first_non_empty(&[
+                value_string(row, "生产号码"),
+                value_string(row, "手机号"),
+            ])
+            .trim_start_matches('\'')
+            .to_string();
+            let region = format_region(&value_string(row, "省"), &value_string(row, "市"))
+                .or_else(|| extract_region(&address));
+            Ok(AdaptOutcome::Row(NormalizedRow {
+                order_id: value_string(row, "订单号"),
+                plan_name: plan_name.clone(),
+                address,
+                raw_phone,
+                name: value_string(row, "用户姓名"),
+                id_card: value_string(row, "身份证号码"),
+                amount_str: value_string(row, "订单金额"),
+                activate_time: excel_date_to_string(&value_string(row, "入网时间")),
+                apply_time: excel_date_to_string(&value_string(row, "下单时间")),
+                status,
+                notes: first_non_empty(&[
+                    value_string(row, "结算规则"),
+                    value_string(row, "备注"),
+                ]),
+                source: value_string(row, "渠道来源").if_empty("号易平台"),
+                express_company: value_string(row, "快递名称"),
+                express_number: value_string(row, "物流单号"),
+                first_charge_str: value_string(row, "首充金额"),
+                carrier_hint: Some(
+                    value_string(row, "运营商")
+                        .if_empty(&plans::parse_carrier(&plan_name)),
+                ),
+                region,
+            }))
+        }
+    }
+}
+
+/// 公共导入流程：事务 RAII + 套餐表一次性预取 + 逐行适配/构造/写入 + 提交回滚。
+/// 来源差异全部封装在 `adapt_row` 内，本函数与平台无关。
+fn import_rows(conn: &Connection, rows: Vec<Value>, source: ImportSource) -> AppResult<ImportResult> {
+    let mut imported = 0;
+    let mut updated = 0;
+    let mut skipped = 0;
+    // RAII 事务。事务对象借用同一个 conn，闭包里的语句自然都在事务内。
+    let tx = conn.unchecked_transaction()?;
+    // 套餐表一次性取出来，循环里复用切片——否则每张卡都 get_all_plans 全表扫一遍
+    let all_plans = plans::get_all_plans(conn)?;
+    let result = (|| {
+        for row in &rows {
+            let normalized = match adapt_row(row, source)? {
+                AdaptOutcome::Skip => {
+                    skipped += 1;
+                    continue;
+                }
+                AdaptOutcome::Row(r) => r,
+            };
+            let existing = find_card_by_order(conn, &normalized.order_id)?;
+            let matched_plan = plans::match_plan_in(&all_plans, &normalized.plan_name);
+            let amount = parse_amount(&normalized.amount_str);
+            let profit = round2(amount * IMPORT_PROFIT_RATE);
+            let activate_time = normalized.activate_time.clone();
+            let promo_end =
+                import_promo_end(existing.as_ref(), matched_plan.as_ref(), &activate_time);
             let customer_id = find_or_create_customer(
                 conn,
-                &value_string(row, "用户姓名"),
-                &raw_phone,
-                &address,
-                &value_string(row, "身份证号码"),
+                &normalized.name,
+                &normalized.raw_phone,
+                &normalized.address,
+                &normalized.id_card,
             )?;
-            let amount = parse_amount(&value_string(row, "订单金额"));
-            let profit = round2(amount * IMPORT_PROFIT_RATE);
-            let activate_time = excel_date_to_string(&value_string(row, "入网时间"));
-            let promo_end = import_promo_end(existing.as_ref(), matched_plan.as_ref(), &activate_time);
-            let apply_time = excel_date_to_string(&value_string(row, "下单时间"));
-            let status = if upstream_status == "已激活" || upstream_status == "已开卡" {
-                "使用中"
-            } else if upstream_status.contains("失败") || upstream_status == "已取消" {
-                "已到期"
-            } else {
-                "待确认"
-            }
-            .to_string();
-
+            let region = normalized
+                .region
+                .or_else(|| matched_plan.as_ref().and_then(|plan| plan.region.clone()))
+                .unwrap_or_default();
+            let carrier = matched_plan
+                .as_ref()
+                .and_then(|plan| plan.carrier.clone())
+                .or(normalized.carrier_hint)
+                .unwrap_or_default();
             let input = build_import_card(
                 existing.as_ref(),
                 matched_plan.as_ref(),
                 CardInput {
-                    card_name: Some(plan_name.clone()),
-                    carrier: Some(
-                        matched_plan
-                            .as_ref()
-                            .and_then(|plan| plan.carrier.clone())
-                            .unwrap_or_else(|| value_string(row, "运营商").if_empty(&plans::parse_carrier(&plan_name))),
-                    ),
-                    plan_type: Some(plans::parse_plan_type(&plan_name)),
+                    card_name: Some(normalized.plan_name.clone()),
+                    carrier: Some(carrier),
+                    plan_type: Some(plans::parse_plan_type(&normalized.plan_name)),
                     monthly_price: Some(
                         matched_plan
                             .as_ref()
                             .map(|plan| plan.monthly_price)
-                            .unwrap_or_else(|| plans::parse_monthly_price(&plan_name)),
+                            .unwrap_or_else(|| plans::parse_monthly_price(&normalized.plan_name)),
                     ),
                     data_amount: Some(
                         matched_plan
                             .as_ref()
                             .map(|plan| plan.data_amount.to_string())
-                            .unwrap_or_else(|| plans::parse_data_amount(&plan_name)),
+                            .unwrap_or_else(|| plans::parse_data_amount(&normalized.plan_name)),
                     ),
-                    region: Some(
-                        format_region(&value_string(row, "省"), &value_string(row, "市"))
-                            .or_else(|| extract_region(&address))
-                            .or_else(|| matched_plan.as_ref().and_then(|plan| plan.region.clone()))
-                            .unwrap_or_default(),
-                    ),
+                    region: Some(region),
                     contract_period: Some(
                         matched_plan
                             .as_ref()
@@ -229,29 +237,31 @@ pub fn import_from_haoyi(conn: &Connection, rows: Vec<Value>) -> AppResult<Impor
                             .unwrap_or(0),
                     ),
                     renewal_reminder_days: Some(30),
-                    apply_time: Some(apply_time),
+                    apply_time: Some(normalized.apply_time.clone()),
                     activate_time: Some(activate_time.clone()),
                     promo_start: Some(activate_time.clone()),
                     promo_end,
-                    phone_number: Some(raw_phone),
+                    phone_number: Some(normalized.raw_phone.clone()),
                     customer_id,
                     profit: Some(profit),
                     status: Some(merge_imported_status(
                         existing.as_ref().map(|card| card.status.as_str()),
-                        &status,
+                        &normalized.status,
                     )),
                     notes: Some(first_non_empty(&[
-                        value_string(row, "结算规则"),
-                        value_string(row, "备注"),
-                        existing.as_ref().and_then(|card| card.notes.clone()).unwrap_or_default(),
+                        normalized.notes.clone(),
+                        existing
+                            .as_ref()
+                            .and_then(|card| card.notes.clone())
+                            .unwrap_or_default(),
                     ])),
-                    external_order_id: Some(order_id),
-                    id_card: optional_non_empty(value_string(row, "身份证号码")),
-                    address: optional_non_empty(address),
-                    express_company: optional_non_empty(value_string(row, "快递名称")),
-                    express_number: optional_non_empty(value_string(row, "物流单号")),
-                    first_charge_amount: Some(parse_amount(&value_string(row, "首充金额"))),
-                    source: Some(value_string(row, "渠道来源").if_empty("号易平台")),
+                    external_order_id: Some(normalized.order_id.clone()),
+                    id_card: optional_non_empty(normalized.id_card.clone()),
+                    address: optional_non_empty(normalized.address.clone()),
+                    express_company: optional_non_empty(normalized.express_company.clone()),
+                    express_number: optional_non_empty(normalized.express_number.clone()),
+                    first_charge_amount: Some(parse_amount(&normalized.first_charge_str)),
+                    source: Some(normalized.source.clone()),
                 },
             );
 

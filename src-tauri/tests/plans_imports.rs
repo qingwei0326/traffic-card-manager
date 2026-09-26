@@ -332,6 +332,94 @@ fn imported_haoyi_duplicate_order_updates_pending_record() {
 }
 
 #[test]
+fn haoyi_import_skips_failed_and_cancelled_orders() {
+    let conn = conn();
+    // 号易平台：上游状态为 开卡失败 / 已取消 的行必须被 skipped，不落卡。
+    let rows = vec![
+        json!({
+            "上游订单状态": "开卡失败",
+            "订单号": "HY-SKIP-FAIL",
+            "商品名称": "号易联通卡29元100G",
+            "运营商": "联通",
+            "订单金额": "100",
+            "首充金额": "",
+            "用户姓名": "钱九",
+            "生产号码": "13900139000",
+            "省": "福建",
+            "市": "厦门",
+            "区": "思明区",
+            "街道": "测试路9号"
+        }),
+        json!({
+            "上游订单状态": "已取消",
+            "订单号": "HY-SKIP-CANCEL",
+            "商品名称": "号易联通卡29元100G",
+            "运营商": "联通",
+            "订单金额": "100",
+            "首充金额": "",
+            "用户姓名": "钱九",
+            "生产号码": "13900139000",
+            "省": "福建",
+            "市": "厦门",
+            "区": "思明区",
+            "街道": "测试路9号"
+        }),
+        json!({
+            "上游订单状态": "已开卡",
+            "订单号": "HY-SKIP-KEEP",
+            "商品名称": "号易联通卡29元100G",
+            "运营商": "联通",
+            "订单金额": "100",
+            "首充金额": "30",
+            "用户姓名": "钱九",
+            "生产号码": "13900139000",
+            "省": "福建",
+            "市": "厦门",
+            "区": "思明区",
+            "街道": "测试路9号"
+        }),
+    ];
+    let result = db::imports::import_from_haoyi(&conn, rows).unwrap();
+    assert_eq!(result.total, 3);
+    assert_eq!(result.skipped, 2);
+    assert_eq!(result.imported, 1);
+
+    let cards = db::cards::get_cards(&conn, None).unwrap().data;
+    assert_eq!(cards.len(), 1);
+    assert_eq!(cards[0].external_order_id.as_deref(), Some("HY-SKIP-KEEP"));
+}
+
+#[test]
+fn haoyi_import_opened_status_maps_to_active() {
+    let conn = conn();
+    // 号易平台：上游状态为 已开卡 应映射为卡片「使用中」，锁住之前未覆盖的分支。
+    db::imports::import_from_haoyi(
+        &conn,
+        vec![json!({
+            "上游订单状态": "已开卡",
+            "订单号": "HY-OPEN-1",
+            "商品名称": "号易联通卡29元100G",
+            "运营商": "联通",
+            "订单金额": "50",
+            "首充金额": "30",
+            "用户姓名": "孙十",
+            "生产号码": "13900139000",
+            "省": "福建",
+            "市": "厦门",
+            "区": "思明区",
+            "街道": "测试路10号"
+        })],
+    )
+    .unwrap();
+
+    let cards = db::cards::get_cards(&conn, None).unwrap().data;
+    assert_eq!(cards.len(), 1);
+    assert_eq!(cards[0].external_order_id.as_deref(), Some("HY-OPEN-1"));
+    assert_eq!(cards[0].status, "使用中");
+    assert_eq!(cards[0].profit, 47.0);
+}
+
+#[test]
 fn plan_backfill_does_not_calculate_missing_promo_end() {
     let conn = conn();
     let created = db::cards::create_card(
