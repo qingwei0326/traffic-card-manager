@@ -45,7 +45,7 @@ vi.mock('../src/lib/appApi', () => ({
     {
       get: (target, prop) =>
         prop in target
-          ? (target as Record<string, unknown>)[prop]
+          ? (target as Record<PropertyKey, unknown>)[prop]
           : new Proxy({}, { get: () => vi.fn().mockResolvedValue(undefined) }),
     },
   ),

@@ -78,7 +78,7 @@ afterEach(() => {
 
 describe('CustomerList 客户管理', () => {
   it('加载并渲染客户表格', async () => {
-    getAll().mockResolvedValue({ data: [customer], total: 1 })
+    getAll().mockResolvedValue({ data: [customer], total: 1, page: 1, pageSize: 20 })
     render(<CustomerList onRefresh={onRefresh} />)
     await waitFor(() => expect(screen.getByText('张三')).toBeTruthy())
     expect(screen.getByText(/共 1 个客户/)).toBeTruthy()
@@ -86,14 +86,14 @@ describe('CustomerList 客户管理', () => {
   })
 
   it('空数据展示空状态并可添加', async () => {
-    getAll().mockResolvedValue({ data: [], total: 0 })
+    getAll().mockResolvedValue({ data: [], total: 0, page: 1, pageSize: 20 })
     render(<CustomerList onRefresh={onRefresh} />)
     await waitFor(() => expect(screen.getByText('暂无客户')).toBeTruthy())
     expect(screen.getByText('添加第一个客户')).toBeTruthy()
   })
 
   it('点击客户行打开详情并加载其卡片', async () => {
-    getAll().mockResolvedValue({ data: [customer], total: 1 })
+    getAll().mockResolvedValue({ data: [customer], total: 1, page: 1, pageSize: 20 })
     getCards().mockResolvedValue([card])
     render(<CustomerList onRefresh={onRefresh} />)
     await waitFor(() => expect(screen.getByText('张三')).toBeTruthy())
@@ -104,7 +104,7 @@ describe('CustomerList 客户管理', () => {
   })
 
   it('点「添加客户」打开新增表单（添加客户标题）', async () => {
-    getAll().mockResolvedValue({ data: [], total: 0 })
+    getAll().mockResolvedValue({ data: [], total: 0, page: 1, pageSize: 20 })
     render(<CustomerList onRefresh={onRefresh} />)
     await waitFor(() => expect(screen.getByText('暂无客户')).toBeTruthy())
     fireEvent.click(screen.getByText('添加第一个客户'))
@@ -112,7 +112,7 @@ describe('CustomerList 客户管理', () => {
   })
 
   it('编辑按钮打开编辑表单（编辑客户标题）', async () => {
-    getAll().mockResolvedValue({ data: [customer], total: 1 })
+    getAll().mockResolvedValue({ data: [customer], total: 1, page: 1, pageSize: 20 })
     render(<CustomerList onRefresh={onRefresh} />)
     await waitFor(() => expect(screen.getByText('张三')).toBeTruthy())
     fireEvent.click(screen.getByText('编辑'))
@@ -120,7 +120,7 @@ describe('CustomerList 客户管理', () => {
   })
 
   it('删除走确认弹窗并最终调用 customers.delete', async () => {
-    getAll().mockResolvedValue({ data: [customer], total: 1 })
+    getAll().mockResolvedValue({ data: [customer], total: 1, page: 1, pageSize: 20 })
     del().mockResolvedValueOnce(undefined)
     render(<CustomerList onRefresh={onRefresh} />)
     await waitFor(() => expect(screen.getByText('张三')).toBeTruthy())
@@ -133,7 +133,7 @@ describe('CustomerList 客户管理', () => {
   })
 
   it('合并去重：发现重复组并可合并', async () => {
-    getAll().mockResolvedValue({ data: [], total: 0 })
+    getAll().mockResolvedValue({ data: [], total: 0, page: 1, pageSize: 20 })
     findDup().mockResolvedValue([[customer, { ...customer, id: 2, name: '李四' }]])
     merge().mockResolvedValue({ merged: 1 })
     render(<CustomerList onRefresh={onRefresh} />)
@@ -146,7 +146,7 @@ describe('CustomerList 客户管理', () => {
   })
 
   it('外部 selectedCustomerId 自动选中详情并触发回调', async () => {
-    getAll().mockResolvedValue({ data: [customer], total: 1 })
+    getAll().mockResolvedValue({ data: [customer], total: 1, page: 1, pageSize: 20 })
     getCards().mockResolvedValue([])
     const onSel = vi.fn()
     render(<CustomerList onRefresh={onRefresh} selectedCustomerId={1} onSelectionHandled={onSel} />)
@@ -155,7 +155,7 @@ describe('CustomerList 客户管理', () => {
   })
 
   it('推荐套餐按钮回调带提取的省份', async () => {
-    getAll().mockResolvedValue({ data: [customer], total: 1 })
+    getAll().mockResolvedValue({ data: [customer], total: 1, page: 1, pageSize: 20 })
     getCards().mockResolvedValue([])
     const onRec = vi.fn()
     render(<CustomerList onRefresh={onRefresh} onRecommendPlans={onRec} />)
@@ -167,7 +167,7 @@ describe('CustomerList 客户管理', () => {
   })
 
   it('切换标签筛选会重新加载', async () => {
-    getAll().mockResolvedValue({ data: [customer], total: 1 })
+    getAll().mockResolvedValue({ data: [customer], total: 1, page: 1, pageSize: 20 })
     render(<CustomerList onRefresh={onRefresh} />)
     await waitFor(() => expect(screen.getByText('张三')).toBeTruthy())
     const callsBefore = getAll().mock.calls.length
@@ -176,7 +176,7 @@ describe('CustomerList 客户管理', () => {
   })
 
   it('多页时翻页重新拉取', async () => {
-    getAll().mockResolvedValue({ data: [customer], total: 120 })
+    getAll().mockResolvedValue({ data: [customer], total: 120, page: 1, pageSize: 20 })
     render(<CustomerList onRefresh={onRefresh} />)
     await waitFor(() => expect(screen.getByText('张三')).toBeTruthy())
     expect(screen.getByText('1 / 3')).toBeTruthy()

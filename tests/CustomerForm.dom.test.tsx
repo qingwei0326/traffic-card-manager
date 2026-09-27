@@ -40,6 +40,7 @@ const sampleCustomer: Customer = {
   notes: 'vip',
   tags: '高价值',
   created_at: '2026-01-01',
+  updated_at: '2026-01-01',
 }
 
 describe('CustomerForm 添加模式', () => {

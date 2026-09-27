@@ -92,7 +92,7 @@ describe('CardForm', () => {
 
   it('submits a valid new card via cards.create and calls onSave', async () => {
     getAll().mockResolvedValue(emptyPage)
-    create().mockResolvedValue({ ...defaultForm, id: 1 } as Card)
+    create().mockResolvedValue({ ...defaultForm, id: 1, created_at: '', updated_at: '' } as Card)
     const onSave = vi.fn()
     render(<CardForm card={null} onSave={onSave} onCancel={() => {}} />)
 

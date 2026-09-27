@@ -45,14 +45,14 @@ afterEach(() => {
 
 describe('CardList 流量卡列表', () => {
   it('加载成功后渲染卡片表格', async () => {
-    getAll().mockResolvedValue({ data: [card], total: 1 })
+    getAll().mockResolvedValue({ data: [card], total: 1, page: 1, pageSize: 20 })
     render(<CardList onRefresh={onRefresh} />)
     await waitFor(() => expect(screen.getByText('联通大王卡')).toBeTruthy())
     expect(screen.getByText(/共 1 张卡片/)).toBeTruthy()
   })
 
   it('无数据时显示空状态', async () => {
-    getAll().mockResolvedValue({ data: [], total: 0 })
+    getAll().mockResolvedValue({ data: [], total: 0, page: 1, pageSize: 20 })
     render(<CardList onRefresh={onRefresh} />)
     await waitFor(() => expect(screen.getByText('暂无数据')).toBeTruthy())
   })
@@ -63,13 +63,13 @@ describe('CardList 流量卡列表', () => {
     await waitFor(() => expect(screen.getByText('数据加载失败')).toBeTruthy())
     expect(screen.getByText('db 炸了')).toBeTruthy()
     // 重试
-    getAll().mockResolvedValue({ data: [card], total: 1 })
+    getAll().mockResolvedValue({ data: [card], total: 1, page: 1, pageSize: 20 })
     fireEvent.click(screen.getByText('重试'))
     await waitFor(() => expect(screen.getByText('联通大王卡')).toBeTruthy())
   })
 
   it('点击客户名回调 onViewCustomer', async () => {
-    getAll().mockResolvedValue({ data: [card], total: 1 })
+    getAll().mockResolvedValue({ data: [card], total: 1, page: 1, pageSize: 20 })
     render(<CardList onRefresh={onRefresh} onViewCustomer={onViewCustomer} />)
     await waitFor(() => expect(screen.getByText('张三')).toBeTruthy())
     fireEvent.click(screen.getByText('张三'))
@@ -77,7 +77,7 @@ describe('CardList 流量卡列表', () => {
   })
 
   it('删除卡片走确认弹窗并最终调用 cards.delete', async () => {
-    getAll().mockResolvedValue({ data: [card], total: 1 })
+    getAll().mockResolvedValue({ data: [card], total: 1, page: 1, pageSize: 20 })
     del().mockResolvedValueOnce(undefined)
     render(<CardList onRefresh={onRefresh} />)
     await waitFor(() => expect(screen.getByText('联通大王卡')).toBeTruthy())
@@ -92,7 +92,7 @@ describe('CardList 流量卡列表', () => {
   })
 
   it('多页时翻页会重新拉取', async () => {
-    getAll().mockResolvedValue({ data: [card], total: 120 })
+    getAll().mockResolvedValue({ data: [card], total: 120, page: 1, pageSize: 20 })
     render(<CardList onRefresh={onRefresh} />)
     await waitFor(() => expect(screen.getByText('联通大王卡')).toBeTruthy())
 
