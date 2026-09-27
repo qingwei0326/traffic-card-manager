@@ -16,7 +16,7 @@ base64 = "0.22"
 chrono = { version = "0.4", features = ["serde", "clock"] }
 md5 = "0.7"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
-rusqlite = { version = "0.32", features = ["bundled", "chrono"] }
+rusqlite = { version = "0.40", features = ["bundled", "chrono"] }
 # 备份文件完整性校验；sha2 已在依赖树里（其他 crate 间接引入），不会新增下载
 sha2 = "0.10"
 serde = { version = "1", features = ["derive"] }
